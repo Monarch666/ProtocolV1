@@ -3,7 +3,8 @@
 #include "uavlink.h"
 
 int main() {
-    printf("=== UAVLink Complete Protocol Demo ===\n\n");
+    printf("=== UAVLink Complete Protocol Demo ===\n");
+    printf("=== Now with SECURE Nonce Management ===\n\n");
     
     // 1. Prepare Payload Data
     ul_attitude_t att_out = {
@@ -25,17 +26,23 @@ int main() {
     h_out.target_sys_id = 0;
     h_out.msg_id = UL_MSG_ATTITUDE;
     
-    // 3. Encrypt and Pack for Transmission
+    // 3. Initialize Nonce State (CRITICAL for security!)
+    ul_nonce_state_t nonce_state;
+    ul_nonce_init(&nonce_state);
+    
+    printf("Nonce State Initialized (Counter: %u)\n\n", nonce_state.counter);
+    
+    // 4. Encrypt and Pack for Transmission with Secure Nonce
     uint8_t tx_buffer[256];
     uint8_t tx_key[32] = "SUPER_SECRET_UAVLINK_KEY_32BYTES"; // 256-bit key
     
-    int tx_len = uavlink_pack(tx_buffer, &h_out, payload_bytes, tx_key);
+    int tx_len = uavlink_pack_with_nonce(tx_buffer, &h_out, payload_bytes, tx_key, &nonce_state);
     
     printf("Transmitting Packet (%d bytes):\n", tx_len);
     for(int i=0; i<tx_len; i++) printf("%02X ", tx_buffer[i]);
     printf("\n\n");
     
-    // 4. Receive and Parse
+    // 5. Receive and Parse
     ul_parser_t parser;
     ul_parser_init(&parser);
     
@@ -50,7 +57,11 @@ int main() {
             for(int j=0; j<parser.header.payload_len; j++) printf("%02X ", parser.payload[j]);
             printf("\n");
             
-            // 5. Deserialize Payload
+            printf("Nonce Used: ");
+            for(int j=0; j<8; j++) printf("%02X ", parser.header.nonce[j]);
+            printf("\n");
+            
+            // 6. Deserialize Payload
             ul_attitude_t att_in;
             ul_deserialize_attitude(&att_in, parser.payload);
             
@@ -62,6 +73,12 @@ int main() {
             printf("PARSE ERROR: %d\n", res);
         }
     }
+    
+    printf("\n=== Security Note ===\n");
+    printf("Each packet now uses a UNIQUE nonce combining:\n");
+    printf("  - 32-bit counter (ensures no reuse)\n");
+    printf("  - 32-bit random data (adds entropy)\n");
+    printf("Next counter value: %u\n", nonce_state.counter);
 
     return 0;
 }

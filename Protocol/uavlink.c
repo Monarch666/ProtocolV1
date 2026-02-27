@@ -2,6 +2,15 @@
 #include <string.h>
 #include "monocypher.h"
 
+/* Platform-specific includes for random number generation */
+#ifdef _WIN32
+    #include <windows.h>
+    #include <wincrypt.h>
+#else
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
+
 /* --- CRC-16/MCRF4XX Implementation --- */
 #define X25_INIT_CRC 0xFFFF
 #define X25_VALIDERATE_CRC 0xF0B8
@@ -209,6 +218,68 @@ int ul_deserialize_attitude(ul_attitude_t *att, const uint8_t *in) {
     return 18;
 }
 
+/* --- Nonce Management Implementation --- */
+
+/* Platform-specific secure random number generation */
+static uint32_t ul_get_random_u32(void) {
+#ifdef _WIN32
+    /* Windows CryptGenRandom */
+    HCRYPTPROV hProvider = 0;
+    uint32_t random_value = 0;
+    
+    if (CryptAcquireContext(&hProvider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        CryptGenRandom(hProvider, sizeof(random_value), (BYTE*)&random_value);
+        CryptReleaseContext(hProvider, 0);
+    }
+    return random_value;
+#else
+    /* Linux/Unix /dev/urandom */
+    uint32_t random_value = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        read(fd, &random_value, sizeof(random_value));
+        close(fd);
+    }
+    return random_value;
+#endif
+}
+
+void ul_nonce_init(ul_nonce_state_t *state) {
+    if (!state) return;
+    
+    /* Initialize counter with random value for extra security */
+    state->counter = ul_get_random_u32();
+    state->initialized = 1;
+}
+
+void ul_nonce_generate(ul_nonce_state_t *state, uint8_t nonce[8]) {
+    if (!state || !nonce) return;
+    
+    /* Initialize if not already done */
+    if (!state->initialized) {
+        ul_nonce_init(state);
+    }
+    
+    /* Hybrid approach:
+       - First 4 bytes: Monotonic counter (ensures uniqueness)
+       - Last 4 bytes: Random data (adds entropy) */
+    
+    uint32_t counter = state->counter++;
+    uint32_t random = ul_get_random_u32();
+    
+    /* Pack counter (little-endian) */
+    nonce[0] = counter & 0xFF;
+    nonce[1] = (counter >> 8) & 0xFF;
+    nonce[2] = (counter >> 16) & 0xFF;
+    nonce[3] = (counter >> 24) & 0xFF;
+    
+    /* Pack random (little-endian) */
+    nonce[4] = random & 0xFF;
+    nonce[5] = (random >> 8) & 0xFF;
+    nonce[6] = (random >> 16) & 0xFF;
+    nonce[7] = (random >> 24) & 0xFF;
+}
+
 /* --- Send Pack API --- */
 
 int uavlink_pack(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, const uint8_t *key_32b) {
@@ -216,8 +287,21 @@ int uavlink_pack(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, con
     
     if (key_32b) {
         hout.encrypted = true;
-        // In a real system you must increment the nonce! Using fixed for demo.
-        for(int i=0; i<8; i++) hout.nonce[i] = i; 
+        /* WARNING: Legacy mode - nonce must be pre-filled in header!
+           For secure operation, use uavlink_pack_with_nonce() instead.
+           This function assumes the caller has already set a unique nonce. */
+        if (hout.nonce[0] == 0 && hout.nonce[1] == 0 && hout.nonce[2] == 0 && 
+            hout.nonce[3] == 0 && hout.nonce[4] == 0 && hout.nonce[5] == 0 && 
+            hout.nonce[6] == 0 && hout.nonce[7] == 0) {
+            /* All zeros - generate a simple timestamp-based nonce as fallback */
+            static uint32_t fallback_counter = 0;
+            uint32_t counter = fallback_counter++;
+            hout.nonce[0] = counter & 0xFF;
+            hout.nonce[1] = (counter >> 8) & 0xFF;
+            hout.nonce[2] = (counter >> 16) & 0xFF;
+            hout.nonce[3] = (counter >> 24) & 0xFF;
+            /* Leave upper 4 bytes as zero */
+        }
     } else {
         hout.encrypted = false;
     }
@@ -360,4 +444,19 @@ int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b) {
             break;
     }
     return 0; // Keeping parsing
+}
+
+/* --- Advanced Packing with Nonce Management --- */
+
+int uavlink_pack_with_nonce(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, 
+                            const uint8_t *key_32b, ul_nonce_state_t *nonce_state) {
+    ul_header_t hout = *h;
+    
+    if (key_32b && nonce_state) {
+        /* Generate secure nonce using hybrid approach */
+        ul_nonce_generate(nonce_state, hout.nonce);
+    }
+    
+    /* Use standard packing function (nonce is now in header) */
+    return uavlink_pack(buf, &hout, payload, key_32b);
 }

@@ -92,6 +92,14 @@ typedef struct {
     uint8_t  payload[256];
 } ul_parser_t;
 
+/* --- Nonce State Management (for secure encryption) --- */
+
+typedef struct {
+    uint32_t counter;      // Monotonically increasing counter
+    uint8_t  initialized;  // 1 if initialized, 0 otherwise
+    uint8_t  reserved[3];  // Padding for alignment
+} ul_nonce_state_t;
+
 /* --- Core Message Payloads --- */
 
 typedef struct {
@@ -144,5 +152,21 @@ int ul_encode_ext_header(uint8_t *buf, const ul_header_t *h);
 
 /* Decode the extended header. Returns the number of bytes read. */
 int ul_decode_ext_header(const uint8_t *buf, ul_header_t *h);
+
+/* --- Nonce Management Functions --- */
+
+/* Initialize nonce state. Must be called before first use. */
+void ul_nonce_init(ul_nonce_state_t *state);
+
+/* Generate a secure nonce using hybrid approach (counter + random).
+   Combines a 32-bit counter with 32 bits of random data for maximum security.
+   The nonce buffer must be at least 8 bytes. */
+void ul_nonce_generate(ul_nonce_state_t *state, uint8_t nonce[8]);
+
+/* Advanced: Pack with nonce state management.
+   Automatically generates and uses a secure nonce from the state.
+   Returns the total packet length (header + payload + CRC). */
+int uavlink_pack_with_nonce(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, 
+                            const uint8_t *key_32b, ul_nonce_state_t *nonce_state);
 
 #endif
