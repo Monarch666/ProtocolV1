@@ -183,7 +183,7 @@ int main()
     for (int i = 0; i < pkt_len; i++)
     {
         int result = ul_parse_char(&parser, packet[i], key);
-        if (result == 1)
+        if (result == UL_OK)
         {
             printf("✓ Packet parsed successfully!\n");
             printf("  Message ID: 0x%03X, Sequence: %d, Payload: %d bytes\n",

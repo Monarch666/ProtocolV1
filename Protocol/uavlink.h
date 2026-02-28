@@ -4,6 +4,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Protocol Constants */
+#define UL_MAX_PAYLOAD_SIZE 512  /* Maximum payload size in parser buffer */
+#define UL_MAC_TAG_SIZE 16       /* Poly1305 MAC tag size (full 128-bit) */
+
+/* Error Codes */
+typedef enum
+{
+    UL_OK = 0,
+    UL_ERR_CRC = -1,
+    UL_ERR_NO_KEY = -2,
+    UL_ERR_MAC_VERIFICATION = -3,
+    UL_ERR_BUFFER_OVERFLOW = -4,
+    UL_ERR_INVALID_HEADER = -5,
+    UL_ERR_NULL_POINTER = -6
+} ul_error_t;
+
 /* Base header byte 0 */
 #define UL_SOF 0xA5
 
@@ -90,6 +106,7 @@ typedef struct
     uint8_t buffer[512]; // Max packet size buffer
     uint16_t buf_idx;
     uint16_t expected_len;
+    uint16_t header_len; // Store actual header length for AEAD
 
     // Extracted payload fields
     ul_header_t header;
