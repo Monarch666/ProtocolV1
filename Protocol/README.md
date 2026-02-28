@@ -1193,7 +1193,7 @@ printf("✓ Round-trip test passed!\n");
 ## Roadmap
 
 - [x] ~~Additional message types (GPS, battery, RC input, etc.)~~ - **COMPLETED**
-- [ ] Full ChaCha20-Poly1305 AEAD implementation
+- [x] ~~Full ChaCha20-Poly1305 AEAD implementation~~ - **COMPLETED**
 - [ ] Python/JavaScript parser implementations
 - [ ] Wireshark dissector for protocol analysis
 - [ ] Formal specification document
@@ -1231,6 +1231,7 @@ This project includes:
 ---
 
 **UAVLink Protocol - Secure, Efficient, Reliable Communication for UAV Systems** 🚁
+
 
 
 
