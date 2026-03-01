@@ -2,8 +2,6 @@
 
 UAVLink is a lightweight binary communication protocol purpose-built for UAV systems. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking.
 
-## Status: Production-Ready ✅
-
 **Current Version:** 1.0 (March 2026)
 
 ### ✨ Key Achievements
@@ -93,7 +91,7 @@ make               # Requires MinGW or MSVC
 **Test Suite (`make test`):**
 ```
 ╔════════════════════════════════════════════════════════════╗
-║         UAVLink Protocol Unit Test Suite v1.0             ║
+║         UAVLink Protocol Unit Test Suite v1.0              ║
 ╚════════════════════════════════════════════════════════════╝
 
 1. SERIALIZATION/DESERIALIZATION TESTS
@@ -761,12 +759,12 @@ make test
 ### Test Results
 
 ```
-╔════════════════════════════════════════════════════════════╗
-║  Total Tests:  33                                          ║
-║  Passed:       33    ✓                                     ║
-║  Failed:       0     ✗                                     ║
-║  Success Rate: 100.0%                                      ║
-╚════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════╗
+║  Total Tests:  33                                         ║
+║  Passed:       33    ✓                                    ║
+║  Failed:       0     ✗                                    ║
+║  Success Rate: 100.0%                                     ║
+╚═══════════════════════════════════════════════════════════╝
 ```
 
 ### Bug Fixes from Testing
