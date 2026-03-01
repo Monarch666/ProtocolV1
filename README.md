@@ -898,20 +898,6 @@ assert(decoded.status == original.status);
 printf("✓ Round-trip test passed!\n");
 ```
 
-### Message Development Checklist
-
-- [ ] Message ID defined in `uavlink.h`
-- [ ] Structure defined with appropriate types
-- [ ] Function prototypes declared
-- [ ] CRC seed added with unique value
-- [ ] Serialization function implemented
-- [ ] Deserialization function implemented
-- [ ] Round-trip test passes
-- [ ] Buffer sizes verified
-- [ ] Example usage documented
-
----
-
 ## Performance Characteristics
 
 ### Packet Overhead
