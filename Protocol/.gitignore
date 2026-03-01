@@ -3,6 +3,7 @@
 *.exe
 example
 example_messages
+test_uavlink
 
 # IDE files
 .vscode/

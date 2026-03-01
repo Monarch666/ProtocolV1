@@ -594,8 +594,9 @@ int uavlink_pack(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, con
         /* crypto_aead_lock(mac, ciphertext, key, nonce, ad, ad_size, plaintext, text_size)
            - Encrypts payload and generates MAC over both header (AAD) and ciphertext
            - MAC protects against both ciphertext and header manipulation */
-        crypto_aead_lock(mac, 
-                        buf + header_len,           /* Output: ciphertext */
+        
+        crypto_aead_lock(buf + header_len,          /* Output: ciphertext */
+                        mac,                         /* Output: MAC tag */
                         key_32b,                     /* 256-bit key */
                         nonce24,                     /* 192-bit nonce (first 64 bits used) */
                         buf,                         /* AAD: entire header for authentication */
@@ -693,17 +694,20 @@ int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b)
             int ext_len = ul_decode_ext_header(p->buffer + 4, &p->header);
             p->header_len = 4 + ext_len; /* Total header = base 4 + extended */
             
-            /* DEBUG: Print decoded nonce */
-            if (p->header.encrypted) {
-                printf("DEBUG: Decoded nonce from packet: ");
-                for (int i = 0; i < 8; i++) printf("%02X ", p->header.nonce[i]);
-                printf("\\n");
-            }
-            
             p->expected_len += p->header.payload_len;
             if (p->header.encrypted)
                 p->expected_len += UL_MAC_TAG_SIZE; // Full 16-byte Poly1305 MAC
-            p->state = UL_PARSE_STATE_PAYLOAD;
+            
+            // For zero-length payloads, skip PAYLOAD state and go directly to CRC
+            if (p->header.payload_len == 0 && !p->header.encrypted)
+            {
+                p->expected_len += 2; // Add 2 for CRC
+                p->state = UL_PARSE_STATE_CRC;
+            }
+            else
+            {
+                p->state = UL_PARSE_STATE_PAYLOAD;
+            }
         }
         break;
 
@@ -777,7 +781,7 @@ int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b)
             }
             else
             {
-                memcpy(p->payload, p->buffer + header_size, p->header.payload_len);
+                memcpy(p->payload, p->buffer + header_size,p->header.payload_len);
             }
 
             // Packet successfully parsed and authenticated
@@ -788,7 +792,7 @@ int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b)
         }
         break;
     }
-    return 0; // Keeping parsing
+    return 1; // Still parsing (need more bytes)
 }
 
 /* --- Advanced Packing with Nonce Management --- */
