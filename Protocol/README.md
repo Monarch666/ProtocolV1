@@ -682,6 +682,7 @@ The protocol now features production-grade authenticated encryption with the fol
    - CRC-16 computed after MAC tag for transmission error detection
 
 **Security Posture:**
+
 - ✅ No replay attacks (hybrid nonce strategy)
 - ✅ No tampering (AEAD MAC verification)
 - ✅ No bit-flip attacks (CRC-16 + Poly1305)
@@ -784,7 +785,7 @@ typedef struct {
 **Field Type Guidelines:**
 
 | Type     | Size | Purpose                           | Range              |
-|----------|------|-----------------------------------|--------------------|
+| -------- | ---- | --------------------------------- | ------------------ |
 | uint8_t  | 1B   | Small integers, flags             | 0 to 255           |
 | uint16_t | 2B   | Medium integers                   | 0 to 65,535        |
 | uint32_t | 4B   | Large integers, timestamps        | 0 to 4,294,967,295 |
@@ -830,17 +831,17 @@ In `uavlink.c`, implement the serialization function to convert struct to bytes:
 ```c
 int ul_serialize_your_message(const ul_your_message_t *msg, uint8_t *out) {
     int offset = 0;
-    
+
     // Pack each field in little-endian format
     pack_uint32(&out[offset], msg->timestamp);
     offset += 4;
-    
+
     pack_float(&out[offset], msg->temperature);
     offset += 4;
-    
+
     out[offset] = msg->status;
     offset += 1;
-    
+
     return offset;  // Return total size (9 bytes)
 }
 ```
@@ -852,16 +853,16 @@ In `uavlink.c`, implement deserialization to convert bytes back to struct:
 ```c
 int ul_deserialize_your_message(ul_your_message_t *msg, const uint8_t *in) {
     int offset = 0;
-    
+
     msg->timestamp = unpack_uint32(&in[offset]);
     offset += 4;
-    
+
     msg->temperature = unpack_float(&in[offset]);
     offset += 4;
-    
+
     msg->status = in[offset];
     offset += 1;
-    
+
     return offset;  // Return total size
 }
 ```
@@ -871,6 +872,7 @@ int ul_deserialize_your_message(ul_your_message_t *msg, const uint8_t *in) {
 The following helper functions handle endianness and type conversion:
 
 **Integer Packing (Little-Endian):**
+
 ```c
 // Unsigned
 pack_uint8(uint8_t *buf, uint8_t value);      // Direct assignment
@@ -884,6 +886,7 @@ pack_int32(uint8_t *buf, int32_t value);      // 4 bytes
 ```
 
 **Integer Unpacking:**
+
 ```c
 uint8_t  unpack_uint8(const uint8_t *buf);
 uint16_t unpack_uint16(const uint8_t *buf);
@@ -894,6 +897,7 @@ int32_t  unpack_int32(const uint8_t *buf);
 ```
 
 **Floating Point:**
+
 ```c
 pack_float(uint8_t *buf, float value);        // 4 bytes, IEEE 754
 float unpack_float(const uint8_t *buf);
@@ -905,6 +909,7 @@ float half_to_float(uint16_t half);           // Convert from 16-bit
 ### Usage Example
 
 **Sending Your Custom Message:**
+
 ```c
 // 1. Create message
 ul_your_message_t msg = {
@@ -930,7 +935,7 @@ ul_header_t header = {
 
 // 4. Pack and encrypt
 uint8_t packet[256];
-int pkt_len = uavlink_pack_with_nonce(packet, &header, payload, 
+int pkt_len = uavlink_pack_with_nonce(packet, &header, payload,
                                       encryption_key, &nonce_state);
 
 // 5. Transmit
@@ -938,19 +943,20 @@ uart_write(packet, pkt_len);
 ```
 
 **Receiving Your Custom Message:**
+
 ```c
 // In UART receive handler
 void uart_rx_handler(uint8_t byte) {
     int result = ul_parse_char(&parser, byte, encryption_key);
-    
+
     if (result == 1) {
         // Packet received successfully
         switch (parser.header.msg_id) {
             case UL_MSG_YOUR_MESSAGE: {
                 ul_your_message_t msg;
                 ul_deserialize_your_message(&msg, parser.payload);
-                
-                printf("Temp: %.1f°C, Status: 0x%02X\n", 
+
+                printf("Temp: %.1f°C, Status: 0x%02X\n",
                        msg.temperature, msg.status);
                 break;
             }
@@ -975,6 +981,7 @@ uint8_t battery_percent;
 ```
 
 **Pack Boolean Flags into Bit Fields:**
+
 ```c
 typedef struct {
     uint8_t armed      : 1;  // Bit 0
@@ -988,26 +995,26 @@ typedef struct {
 
 Use integer types with appropriate scaling for compactness:
 
-| Field Type      | Unit              | Precision | Range           | Storage |
-|-----------------|-------------------|-----------|-----------------|---------|
-| GPS latitude    | degrees × 1e7     | ~1cm      | ±214.7°         | int32   |
-| GPS altitude    | millimeters       | 1mm       | ±2,147km        | int32   |
-| Voltage         | millivolts        | 1mV       | 0-65.535V       | uint16  |
-| Current         | centiamps         | 10mA      | ±327.67A        | int16   |
-| Temperature     | °C × 100          | 0.01°C    | -327 to 327°C   | int16   |
-| Velocity        | cm/s              | 1cm/s     | 0-655.35 m/s    | uint16  |
-| Angle (precise) | radians (float32) | High      | Full range      | float   |
-| Angle (compact) | degrees × 100     | 0.01°     | 0-655.35°       | uint16  |
+| Field Type      | Unit              | Precision | Range         | Storage |
+| --------------- | ----------------- | --------- | ------------- | ------- |
+| GPS latitude    | degrees × 1e7     | ~1cm      | ±214.7°       | int32   |
+| GPS altitude    | millimeters       | 1mm       | ±2,147km      | int32   |
+| Voltage         | millivolts        | 1mV       | 0-65.535V     | uint16  |
+| Current         | centiamps         | 10mA      | ±327.67A      | int16   |
+| Temperature     | °C × 100          | 0.01°C    | -327 to 327°C | int16   |
+| Velocity        | cm/s              | 1cm/s     | 0-655.35 m/s  | uint16  |
+| Angle (precise) | radians (float32) | High      | Full range    | float   |
+| Angle (compact) | degrees × 100     | 0.01°     | 0-655.35°     | uint16  |
 
 #### 3. Select Appropriate Stream Type
 
-| Stream Type          | Update Rate | Use Cases                      |
-|---------------------|-------------|--------------------------------|
-| TELEM_FAST (0x0)    | 10-100 Hz   | Attitude, RC input, IMU        |
-| TELEM_SLOW (0x1)    | 0.1-10 Hz   | Battery, GPS, system status    |
-| SENSOR (0x6)        | 50-1000 Hz  | Raw IMU, rangefinder, optical  |
-| HEARTBEAT (0x7)     | 1 Hz        | System alive, basic status     |
-| ALERT (0x8)         | On-event    | Warnings, errors, emergencies  |
+| Stream Type      | Update Rate | Use Cases                     |
+| ---------------- | ----------- | ----------------------------- |
+| TELEM_FAST (0x0) | 10-100 Hz   | Attitude, RC input, IMU       |
+| TELEM_SLOW (0x1) | 0.1-10 Hz   | Battery, GPS, system status   |
+| SENSOR (0x6)     | 50-1000 Hz  | Raw IMU, rangefinder, optical |
+| HEARTBEAT (0x7)  | 1 Hz        | System alive, basic status    |
+| ALERT (0x8)      | On-event    | Warnings, errors, emergencies |
 
 #### 4. Component ID Organization
 
@@ -1102,8 +1109,8 @@ Always test serialization/deserialization for round-trip accuracy:
 
 ```c
 // Create original message
-ul_your_message_t original = { 
-    .timestamp = 123456, 
+ul_your_message_t original = {
+    .timestamp = 123456,
     .temperature = 25.5f,
     .status = 0x42
 };
@@ -1127,47 +1134,52 @@ printf("✓ Round-trip test passed!\n");
 ### Common Mistakes to Avoid
 
 1. **❌ Forgetting to return payload size:**
+
    ```c
    // Wrong - missing return
    int ul_serialize_foo(...) {
        pack_uint32(out, value);
        // Oops, no return!
    }
-   
+
    // Correct
    return 4;
    ```
 
 2. **❌ Endianness confusion:**
+
    ```c
    // Wrong - breaks on different architectures
    *(uint32_t*)buffer = value;
-   
+
    // Correct - portable
    pack_uint32(buffer, value);
    ```
 
 3. **❌ Buffer overflow:**
+
    ```c
    uint8_t payload[10];  // Too small!
    ul_serialize_gps_raw(&gps, payload);  // Needs 22 bytes - CRASH!
-   
+
    // Always allocate enough space
    uint8_t payload[32];  // Safe
    ```
 
 4. **❌ Forgetting CRC seed:**
+
    ```c
    // Without unique CRC seed, validation is weakened
    // Always add your message ID to ul_get_crc_seed()
    ```
 
 5. **❌ Wrong offset arithmetic:**
+
    ```c
    // Wrong - offset not updated
    pack_uint32(&out[0], msg->field1);
    pack_float(&out[0], msg->field2);  // Overwrites field1!
-   
+
    // Correct - track offset
    int offset = 0;
    pack_uint32(&out[offset], msg->field1);
@@ -1327,6 +1339,3 @@ This project includes:
 ---
 
 **UAVLink Protocol - Secure, Efficient, Reliable Communication for UAV Systems** 🚁
-
-
-
