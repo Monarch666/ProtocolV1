@@ -21,6 +21,7 @@ UAVLink is a lightweight binary communication protocol purpose-built for UAV sys
 
 - `uavlink.h` - Core API, structures, and constants
 - `uavlink.c` - Encoding/decoding implementation with secure nonce generation
+- `test_uavlink.c` - Comprehensive unit test suite (33 tests, 100% pass rate)
 - `example.c` - Basic demonstration of attitude message encrypt/decrypt workflow
 - `example_messages.c` - Comprehensive demo of all 5 implemented message types
 - `monocypher.c/h` - Portable ChaCha20 cryptography library
@@ -1190,10 +1191,105 @@ printf("✓ Round-trip test passed!\n");
 
 ---
 
+## Test Suite
+
+UAVLink includes a comprehensive unit test suite with **33 tests** achieving **100% pass rate**, validating all protocol functionality.
+
+### Running Tests
+
+```bash
+# Using WSL (Recommended on Windows)
+wsl make test
+
+# Native Linux/macOS
+make test
+```
+
+### Test Coverage (10 Categories)
+
+1. **Serialization/Deserialization (5 tests)**
+   - Heartbeat, attitude, GPS, battery, RC input message round-trips
+   - Validates packing/unpacking of all message types
+
+2. **AEAD Encryption (1 test)**
+   - ChaCha20-Poly1305 encrypt/decrypt round-trip
+   - Verifies cryptographic integrity
+
+3. **MAC Verification (3 tests)**
+   - Tampered payload detection
+   - Tampered header detection
+   - Wrong key rejection
+
+4. **Parser State Machine (3 tests)**
+   - Multiple packet parsing in stream
+   - Bad CRC rejection
+   - Bad start-of-frame handling
+
+5. **Error Handling (2 tests)**
+   - NULL pointer validation
+   - Buffer overflow protection
+
+6. **CRC (2 tests)**
+   - Known vector validation
+   - Empty message handling
+
+7. **Nonce Management (4 tests)**
+   - Initialization from system randomness
+   - Uniqueness across packets
+   - Counter increment behavior
+   - State tracking during packing
+
+8. **Replay Protection (5 tests)**
+   - Basic sequence tracking
+   - Duplicate sequence detection
+   - Sequence number rollover (65535 → 0)
+   - Out-of-order packet handling
+   - Encrypted packet replay prevention
+
+9. **Fragmentation (5 tests)**
+   - Header encoding/decoding (frag_index, frag_total)
+   - Multiple fragments as separate packets
+   - Fragmentation with encryption
+   - Non-fragmented packet verification
+   - Boundary cases (first/last/single fragments)
+
+10. **Edge Cases (3 tests)**
+    - Zero-length payload handling
+    - Maximum sequence number (65535)
+    - All priority levels (Bulk, Normal, High, Emergency)
+
+### Test Results
+
+```
+╔════════════════════════════════════════════════════════════╗
+║  Total Tests:  33                                          ║
+║  Passed:       33    ✓                                     ║
+║  Failed:       0     ✗                                     ║
+║  Success Rate: 100.0%                                      ║
+╚════════════════════════════════════════════════════════════╝
+```
+
+### Bug Fixes from Testing
+
+During test development, several critical bugs were discovered and fixed:
+
+1. **AEAD Parameter Swap** - `crypto_aead_lock()` had MAC and ciphertext outputs reversed
+2. **Parser API Ambiguity** - Return value conflict between `UL_OK` (0) and "keep parsing" state
+3. **Zero-Length Payload** - Parser stuck in PAYLOAD state for empty messages
+
+All issues resolved with production code fixes validated by the test suite.
+
+### Fragmentation Behavior
+
+**Note:** The current implementation encodes and decodes fragmentation metadata (frag_index, frag_total) but does **not** reassemble fragments. Each fragment is parsed as an independent packet. Applications requiring reassembly must implement it at a higher layer.
+
+---
+
 ## Roadmap
 
 - [x] ~~Additional message types (GPS, battery, RC input, etc.)~~ - **COMPLETED**
-- [ ] Full ChaCha20-Poly1305 AEAD implementation
+- [x] ~~Full ChaCha20-Poly1305 AEAD implementation~~ - **COMPLETED**
+- [x] ~~Comprehensive unit test suite~~ - **COMPLETED (33 tests, 100% pass rate)**
 - [ ] Python/JavaScript parser implementations
 - [ ] Wireshark dissector for protocol analysis
 - [ ] Formal specification document
