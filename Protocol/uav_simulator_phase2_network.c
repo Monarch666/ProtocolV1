@@ -91,7 +91,7 @@ int main(void) {
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(14550);
-    dest_addr.sin_addr.s_addr = inet_addr("127.0.0.1");  // localhost
+    dest_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); //localhost
     
     printf("Sending to 127.0.0.1:14550\n");
     printf("Starting transmission...\n\n");

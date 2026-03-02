@@ -216,6 +216,16 @@ int main(void) {
             continue;
         }
         
+        // Validate packet size (UAVLink: 10-512 bytes for typical messages)
+        if (recv_len < 10 || recv_len > 512) {
+            continue;  // Reject: too small or suspiciously large
+        }
+        
+        //Validate Start of Frame marker
+        if (recv_buffer[0] != 0xA5) {
+            continue;  // Not a UAVLink packet
+        }
+        
         g_stats.packets_received++;
         g_stats.bytes_received += recv_len;
         

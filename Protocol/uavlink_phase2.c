@@ -47,23 +47,35 @@ int ul_parse_char_zerocopy(ul_parser_zerocopy_t *parser, uint8_t byte, uint8_t *
                 parser->payload_len = ((byte1 & 0xF0) << 4) | ((byte2 & 0x3F) << 2) | ((byte3 & 0xC0) >> 6);
                 bool encrypted = (byte3 & UL_FLAG_ENCRYPTED) != 0;
                 
-                if (encrypted) {
-                    parser->state = 2;  // EXT_HDR (need to read more)
-                } else {
-                    parser->state = 3;  // PAYLOAD
-                    parser->bytes_received = 0;
-                }
+                // Always go to extended header to read system/component/message IDs
+                parser->state = 2;  // EXT_HDR
             }
             break;
             
-        case 2:  // EXT_HDR (for encrypted packets)
+        case 2:  // EXT_HDR (both encrypted and unencrypted)
             parser->header_buf[parser->bytes_received++] = byte;
             
-            // Extended header includes: sys/comp/msg IDs, nonce, etc.
-            // Simplified: skip to payload after reading ~20 bytes
-            if (parser->bytes_received >= 24) {
-                parser->state = 3;  // PAYLOAD
-                parser->bytes_received = 0;
+            // Extended header: bytes 4-7 are sequence, sys_id, comp_id, msg_id
+            // Extract message ID at byte 7 (0-indexed position in header_buf)
+            if (parser->bytes_received == 7) {
+                parser->msg_id = byte;  // Message ID is at byte 7
+            }
+            
+            // Check if encrypted to determine extended header length
+            bool encrypted = (parser->header_buf[3] & UL_FLAG_ENCRYPTED) != 0;
+            
+            if (encrypted) {
+                // For encrypted: need to read nonce (8 bytes) + routing (4 bytes) = 12 bytes extra
+                if (parser->bytes_received >= 20) {
+                    parser->state = 3;  // PAYLOAD
+                    parser->bytes_received = 0;
+                }
+            } else {
+                // For unencrypted: only need routing info (4 bytes after base header)
+                if (parser->bytes_received >= 8) {
+                    parser->state = 3;  // PAYLOAD
+                    parser->bytes_received = 0;
+                }
             }
             break;
             
