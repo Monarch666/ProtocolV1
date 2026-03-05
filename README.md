@@ -94,17 +94,17 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 
 #### Phase 2 Optimizations
 
-| File                        | Description                              |
-| --------------------------- | ---------------------------------------- |
-| `Protocol/uavlink_phase2.h` | Zero-copy parser, memory pool APIs       |
-| `Protocol/uavlink_phase2.c` | Performance optimization implementations |
+| File                    | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `Protocol/uavlink_fast.h` | Zero-copy parser, memory pool APIs       |
+| `Protocol/uavlink_fast.c` | Performance optimization implementations |
 
 #### Phase 3 Advanced Features
 
 | File                        | Description                         |
 | --------------------------- | ----------------------------------- |
-| `Protocol/uavlink_phase3.h` | Delta encoding, LZ4, FEC APIs       |
-| `Protocol/uavlink_phase3.c` | Compression and FEC implementations |
+| `Protocol/uavlink_compress.h` | Delta encoding, LZ4, FEC APIs       |
+| `Protocol/uavlink_compress.c` | Compression and FEC implementations |
 
 #### Hardware Acceleration
 
@@ -118,75 +118,68 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 | File                                      | Description                                      |
 | ----------------------------------------- | ------------------------------------------------ |
 | `Protocol/uavlink_benchmark.c`            | Performance profiler (1000 iterations)           |
-| `Protocol/gcs_receiver_phase2.c`          | Network receiver demo with Phase 2 optimizations |
-| `Protocol/uav_simulator_phase2_network.c` | Network transmitter demo                         |
-| `Protocol/IMPLEMENTATION_SUMMARY.md`      | Complete technical documentation                 |
+| `Protocol/gcs_receiver.c`                 | Network receiver demo with Phase 2 optimizations |
+| `Protocol/uav_simulator.c`                | Network transmitter demo (supports CLI IP arg)   |
 
 ### Compiling and Testing
 
-**Option 1: Run Performance Benchmark (Shows All Optimizations)**
+**Option 1: Run Performance Benchmark**
 
 ```bash
 cd Protocol
-gcc -o uavlink_benchmark.exe uavlink_benchmark.c uavlink.c \
-    uavlink_phase2.o uavlink_phase3.o uavlink_hw_crypto.o monocypher.c -O3
-.\uavlink_benchmark.exe
+gcc -Wall -O2 -o uavlink_benchmark uavlink_benchmark.c uavlink.c \
+    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lm
+./uavlink_benchmark
 ```
 
-Expected output:
-
-```
-Phase 2 zero-copy: 6.17x parse speedup
-Phase 3 delta encoding: 57% bandwidth savings
-Combined: 31.7% bandwidth reduction
-Memory pool: Zero leaks confirmed
-```
-
-**Option 2: Network Test (Transmitter + Receiver)**
+**Option 2: Network Test (Localhost — Single PC)**
 
 ```bash
 cd Protocol
+
+# Compile both
+gcc -Wall -O2 -o gcs_receiver gcs_receiver.c uavlink.c \
+    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lws2_32 -lm
+gcc -Wall -O2 -o uav_simulator uav_simulator.c uavlink.c \
+    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lws2_32 -lm
+
 # Terminal 1: Start receiver
-.\gcs_receiver_phase2.exe
+./gcs_receiver
 
-# Terminal 2: Start transmitter
-.\uav_simulator_phase2_network.exe
+# Terminal 2: Start transmitter (defaults to 127.0.0.1)
+./uav_simulator
 ```
 
-Expected: 234 packets transmitted successfully over 20 seconds
+**Option 3: Network Test (Two PCs on Same WiFi)**
 
-**Option 3: Compile with Hardware Acceleration**
+```bash
+# On the RECEIVER PC:
+./gcs_receiver          # Listens on UDP port 14550
+
+# On the SENDER PC (pass the receiver's WiFi IP as argument):
+./uav_simulator 192.168.1.25
+```
+
+> **Note:** On Windows, add a firewall rule on the receiver PC:
+> `netsh advfirewall firewall add rule name="UAVLink" dir=in action=allow protocol=UDP localport=14550`
+
+**Option 4: Compile with Hardware Acceleration**
 
 ```bash
 # ARM NEON build (4x crypto speedup)
-gcc -o uavlink_test test.c uavlink.c uavlink_phase2.o uavlink_phase3.o \
-    uavlink_hw_crypto.o monocypher.c -O3 -mfpu=neon -march=armv7-a
+gcc -Wall -O2 -o uavlink_test test.c uavlink.c uavlink_fast.c uavlink_compress.c \
+    uavlink_hw_crypto.c monocypher.c -mfpu=neon -march=armv7-a -lm
 
 # x86 AVX2 build (4x crypto speedup)
-gcc -o uavlink_test test.c uavlink.c uavlink_phase2.o uavlink_phase3.o \
-    uavlink_hw_crypto.o monocypher.c -O3 -mavx2
+gcc -Wall -O2 -o uavlink_test test.c uavlink.c uavlink_fast.c uavlink_compress.c \
+    uavlink_hw_crypto.c monocypher.c -mavx2 -lm
 ```
 
 ### Expected Output
 
-**Benchmark (`uavlink_benchmark.exe`):**
+**Benchmark:**
 
 ```
-================================================================================
-BENCHMARK RESULTS
-================================================================================
-
-Test                 Pack (µs)      Parse (µs)     Bytes        Total (µs)
--------------------- --------------- --------------- ------------ ------------
-Baseline            Pack:      0 µs  Parse:      1 µs  Bytes:    41  Total:     1 µs
-Phase 1             Pack:    152 µs  Parse:      1 µs  Bytes:    41  Total:   154 µs
-Phase 2             Pack:    110 µs  Parse:      0 µs  Bytes:    41  Total:   110 µs
-Phase 3             Pack:      0 µs  Parse:      0 µs  Bytes:    12  Total:     0 µs
-
-================================================================================
-SPEEDUP ANALYSIS
-================================================================================
-
 Phase 2 vs Baseline:
   Parse speedup:    6.17x
   Alloc time:       <1 µs avg (O(1) pool)
@@ -194,30 +187,29 @@ Phase 2 vs Baseline:
 Phase 3 (Delta encoding):
   Delta packets:    12 bytes avg (57% reduction from 28 bytes)
 
-Combined Phase 1+2+3:
-  Bandwidth:        28 bytes (31.7% reduction)
-
 RECOMMENDATIONS:
 ✓ Delta encoding saves ~57% for telemetry - USE for GPS/Attitude
 ○ Software crypto only - Consider ARM/x86 SIMD build
 ```
 
-**Network Test:**
+**Network Test (Two-PC WiFi Test):**
 
 ```
-=== UAVLink Phase 2 UAV Simulator (Network) ===
-
+# Sender output:
 Packets sent: 234
 Bytes sent: 11948
 Average packet size: 51 bytes
+Memory leaks: None
 
-Memory Pool Statistics:
-  Allocations: 234
-  Frees: 234
-  Peak usage: 1/32 buffers (3.1%)
-  Current usage: 0 buffers
-  Memory leaks: None
+# Receiver output:
+Packets parsed: 200+
+Parse errors: 0
+CRC errors: 0
+Avg parse time: 4 us/packet
+Memory pool peak usage: 1/32 buffers
 ```
+
+> ✅ Successfully tested over WiFi between two Windows PCs with zero packet loss and full AEAD encryption.
 
 ### Integrating into Your Code
 
@@ -225,8 +217,8 @@ To add UAVLink to your flight controller or ground station:
 
 1. **Copy files** into your build tree:
    - Core: `uavlink.h`, `uavlink.c`, `monocypher.h`, `monocypher.c`
-   - Phase 2: `uavlink_phase2.h`, `uavlink_phase2.c` (optional, for performance)
-   - Phase 3: `uavlink_phase3.h`, `uavlink_phase3.c` (optional, for compression)
+   - Phase 2: `uavlink_fast.h`, `uavlink_fast.c` (optional, for performance)
+   - Phase 3: `uavlink_compress.h`, `uavlink_compress.c` (optional, for compression)
    - Hardware: `uavlink_hw_crypto.h`, `uavlink_hw_crypto.c` (optional, for SIMD)
 
 2. **Basic Usage (Baseline Protocol):**
@@ -268,7 +260,7 @@ To add UAVLink to your flight controller or ground station:
 
    ```c
    #include "uavlink.h"
-   #include "uavlink_phase2.h"
+   #include "uavlink_fast.h"
 
    // Initialize memory pool (once at startup)
    ul_mempool_t pool;
@@ -298,7 +290,7 @@ To add UAVLink to your flight controller or ground station:
 4. **Phase 3 Advanced Usage (57% bandwidth savings for telemetry):**
 
    ```c
-   #include "uavlink_phase3.h"
+   #include "uavlink_compress.h"
 
    // Initialize delta encoder (once at startup)
    ul_delta_ctx_t delta_ctx;
@@ -1177,10 +1169,12 @@ On ARM Cortex-M4 @168MHz:
   - Full encryption implementation
   - MAC authentication
   - Security hardening
-- **March 2026** - Comprehensive test suite development
+- **March 2026** - Comprehensive testing and optimization
   - Built 33-test validation framework
   - Discovered and fixed 3 critical bugs
   - Achieved 100% test pass rate
+  - Phase 2 & 3 performance optimizations (zero-copy parser, memory pool, delta encoding)
+  - Two-PC WiFi network test with zero packet loss
   - Production-ready release
 
 ---

@@ -1,5 +1,5 @@
-#ifndef UAVLINK_PHASE2_H
-#define UAVLINK_PHASE2_H
+#ifndef UAVLINK_FAST_H
+#define UAVLINK_FAST_H
 
 #include "uavlink.h"
 #include <stdint.h>
@@ -197,4 +197,4 @@ int ul_pack_fast(ul_mempool_t *pool, const ul_header_t *h, const uint8_t *payloa
  */
 int ul_parse_char_fast(ul_parser_zerocopy_t *parser, uint8_t byte, ul_mempool_t *pool);
 
-#endif // UAVLINK_PHASE2_H
+#endif // UAVLINK_FAST_H

@@ -12,8 +12,8 @@
  * - Latency: Reduced data size = faster transmission on slow links
  */
 
-#ifndef UAVLINK_PHASE3_H
-#define UAVLINK_PHASE3_H
+#ifndef UAVLINK_COMPRESS_H
+#define UAVLINK_COMPRESS_H
 
 #include "uavlink.h"
 #include <stdint.h>
@@ -307,4 +307,4 @@ void ul_phase3_get_stats(ul_phase3_stats_t *stats);
  */
 void ul_phase3_reset_stats(void);
 
-#endif // UAVLINK_PHASE3_H
+#endif // UAVLINK_COMPRESS_H

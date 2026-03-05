@@ -1,6 +1,12 @@
 # Build artifacts
 *.o
 *.exe
+
+# Binary outputs (Linux/macOS)
+uavlink_benchmark
+gcs_receiver
+uav_simulator
+uavlink_test
 example
 example_messages
 test_uavlink

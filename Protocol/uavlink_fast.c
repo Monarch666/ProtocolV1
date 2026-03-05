@@ -1,4 +1,4 @@
-#include "uavlink_phase2.h"
+#include "uavlink_fast.h"
 #include "uavlink.h"
 #include <string.h>
 #include <stdint.h>

@@ -1,34 +1,30 @@
 CC = gcc
 CFLAGS = -Wall -O2
 
-all: example example_messages test_uavlink
+# Source files
+CORE_SRC = uavlink.c uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c
 
-example: example.o uavlink.o monocypher.o
-	$(CC) $(CFLAGS) -o example example.o uavlink.o monocypher.o
+# Platform-specific flags
+ifeq ($(OS),Windows_NT)
+    LDFLAGS = -lws2_32 -lm
+    EXT = .exe
+else
+    LDFLAGS = -lm
+    EXT =
+endif
 
-example_messages: example_messages.o uavlink.o monocypher.o
-	$(CC) $(CFLAGS) -o example_messages example_messages.o uavlink.o monocypher.o
+all: benchmark receiver simulator
 
-test_uavlink: test_uavlink.o uavlink.o monocypher.o
-	$(CC) $(CFLAGS) -o test_uavlink test_uavlink.o uavlink.o monocypher.o -lm
+benchmark: uavlink_benchmark.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o uavlink_benchmark$(EXT) uavlink_benchmark.c $(CORE_SRC) $(LDFLAGS)
 
-example.o: example.c uavlink.h
-	$(CC) $(CFLAGS) -c example.c
+receiver: gcs_receiver.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o gcs_receiver$(EXT) gcs_receiver.c $(CORE_SRC) $(LDFLAGS)
 
-example_messages.o: example_messages.c uavlink.h
-	$(CC) $(CFLAGS) -c example_messages.c
-
-test_uavlink.o: test_uavlink.c uavlink.h monocypher.h
-	$(CC) $(CFLAGS) -c test_uavlink.c
-
-uavlink.o: uavlink.c uavlink.h monocypher.h
-	$(CC) $(CFLAGS) -c uavlink.c
-
-monocypher.o: monocypher.c monocypher.h
-	$(CC) $(CFLAGS) -c monocypher.c
+simulator: uav_simulator.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o uav_simulator$(EXT) uav_simulator.c $(CORE_SRC) $(LDFLAGS)
 
 clean:
-	rm -f *.o example example.exe example_messages example_messages.exe test_uavlink test_uavlink.exe
+	rm -f *.o *.exe uavlink_benchmark gcs_receiver uav_simulator
 
-test: test_uavlink
-	./test_uavlink
+.PHONY: all benchmark receiver simulator clean

@@ -7,7 +7,7 @@
  * -Delta encoding for telemetry
  */
 
-#include "uavlink_phase3.h"
+#include "uavlink_compress.h"
 #include <string.h>
 #include <stdlib.h>
 

@@ -8,7 +8,7 @@
  */
 
 #include "uavlink.h"
-#include "uavlink_phase2.h"
+#include "uavlink_fast.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -43,9 +43,21 @@ typedef struct
     uint16_t sequence;
 } sim_state_t;
 
-int main(void)
+int main(int argc, char *argv[])
 {
     printf("=== UAVLink Phase 2 UAV Simulator (Network) ===\n\n");
+
+    // Determine destination IP from command line or default to localhost
+    const char *dest_ip = "127.0.0.1";
+    if (argc >= 2)
+    {
+        dest_ip = argv[1];
+    }
+    else
+    {
+        printf("Usage: %s <receiver_ip>\n", argv[0]);
+        printf("No IP provided, defaulting to 127.0.0.1 (localhost)\n\n");
+    }
 
     // Initialize memory pool
     ul_mempool_t pool;
@@ -102,9 +114,9 @@ int main(void)
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(14550);
-    dest_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // localhost
+    dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
 
-    printf("Sending to 127.0.0.1:14550\n");
+    printf("Sending to %s:14550\n", dest_ip);
     printf("Starting transmission...\n\n");
 
     // Initialize simulation state

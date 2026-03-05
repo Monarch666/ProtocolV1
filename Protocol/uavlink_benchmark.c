@@ -17,8 +17,8 @@
  */
 
 #include "uavlink.h"
-#include "uavlink_phase2.h"
-#include "uavlink_phase3.h"
+#include "uavlink_fast.h"
+#include "uavlink_compress.h"
 #include "uavlink_hw_crypto.h"
 #include <stdio.h>
 #include <string.h>

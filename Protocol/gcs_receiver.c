@@ -8,7 +8,7 @@
  */
 
 #include "uavlink.h"
-#include "uavlink_phase2.h"
+#include "uavlink_fast.h"
 #include "monocypher.h"
 #include <stdio.h>
 #include <string.h>
