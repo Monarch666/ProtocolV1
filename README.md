@@ -1292,5 +1292,3 @@ See LICENSE file for details.
 - **Discussions:** https://github.com/Monarch666/ProtocolV1/discussions
 
 ---
-
-**UAVLink Protocol - Secure, Efficient, Reliable Communication for UAV Systems** 🚁
