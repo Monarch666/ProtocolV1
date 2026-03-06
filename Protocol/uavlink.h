@@ -83,13 +83,40 @@ typedef struct
 } ul_header_t;
 
 /* Message IDs */
-#define UL_MSG_HEARTBEAT 0x001
-#define UL_MSG_ATTITUDE 0x002
-#define UL_MSG_GPS_RAW 0x003
-#define UL_MSG_BATTERY 0x004
-#define UL_MSG_RC_INPUT 0x005
-#define UL_MSG_CMD 0x006
-#define UL_MSG_BATCH 0x3FF /* Special message ID for message batching */
+#define UL_MSG_HEARTBEAT     0x001
+#define UL_MSG_ATTITUDE      0x002
+#define UL_MSG_GPS_RAW       0x003
+#define UL_MSG_BATTERY       0x004
+#define UL_MSG_RC_INPUT      0x005
+#define UL_MSG_CMD           0x006
+#define UL_MSG_CMD_ACK       0x007
+#define UL_MSG_MODE_CHANGE   0x008
+#define UL_MSG_MISSION_ITEM  0x009
+#define UL_MSG_BATCH         0x3FF /* Special message ID for message batching */
+
+/* Command IDs (used in ul_command_t.command_id) */
+#define UL_CMD_ARM         0x0001  /* Arm motors */
+#define UL_CMD_DISARM      0x0002  /* Disarm motors */
+#define UL_CMD_TAKEOFF     0x0003  /* Takeoff to altitude (param1 = alt in cm) */
+#define UL_CMD_LAND        0x0004  /* Land at current position */
+#define UL_CMD_RTL         0x0005  /* Return to launch */
+#define UL_CMD_EMERGENCY   0x0006  /* Emergency stop */
+
+/* ACK Result Codes (used in ul_command_ack_t.result) */
+#define UL_ACK_OK          0x00  /* Command accepted */
+#define UL_ACK_REJECTED    0x01  /* Command rejected (wrong state) */
+#define UL_ACK_UNSUPPORTED 0x02  /* Unknown command ID */
+#define UL_ACK_FAILED      0x03  /* Command failed */
+#define UL_ACK_IN_PROGRESS 0x04  /* Command in progress */
+
+/* Flight Modes (used in ul_mode_change_t.mode) */
+#define UL_MODE_MANUAL     0x00
+#define UL_MODE_STABILIZE  0x01
+#define UL_MODE_ALT_HOLD   0x02
+#define UL_MODE_LOITER     0x03
+#define UL_MODE_AUTO       0x04
+#define UL_MODE_RTL        0x05
+#define UL_MODE_LAND       0x06
 
 /* --- OPTIMIZATION: Selective Encryption Policies --- */
 typedef enum
@@ -213,6 +240,45 @@ typedef struct
     uint8_t quality;      // Link quality (0-100%)
 } ul_rc_input_t;
 
+/* --- Command & Control Messages --- */
+
+/* Generic command (GCS -> UAV) */
+typedef struct
+{
+    uint16_t command_id; // Command ID (UL_CMD_ARM, etc.)
+    uint16_t param1;     // Parameter 1 (command-specific)
+    uint16_t param2;     // Parameter 2 (command-specific)
+    uint16_t param3;     // Parameter 3 (command-specific)
+} ul_command_t;
+
+/* Command acknowledgement (UAV -> GCS) */
+typedef struct
+{
+    uint16_t command_id; // Command ID being acknowledged
+    uint8_t result;      // Result code (UL_ACK_OK, etc.)
+    uint8_t progress;    // Progress 0-100% (for UL_ACK_IN_PROGRESS)
+} ul_command_ack_t;
+
+/* Flight mode change request (GCS -> UAV) */
+typedef struct
+{
+    uint8_t mode;     // Target flight mode (UL_MODE_MANUAL, etc.)
+    uint8_t reserved; // Reserved for future use
+} ul_mode_change_t;
+
+/* Mission item / waypoint (GCS -> UAV) */
+typedef struct
+{
+    uint16_t seq;         // Waypoint sequence number (0-based)
+    uint8_t frame;        // Coordinate frame (0=global, 1=relative)
+    uint8_t command;      // Waypoint action (0=navigate, 1=loiter, 2=land)
+    int32_t lat;          // Latitude (deg x 1e7)
+    int32_t lon;          // Longitude (deg x 1e7)
+    int32_t alt;          // Altitude (mm)
+    uint16_t speed;       // Desired speed (cm/s, 0 = default)
+    uint16_t loiter_time; // Loiter time at waypoint (seconds)
+} ul_mission_item_t;
+
 /* --- Function Prototypes --- */
 
 /* Initialize a parser */
@@ -242,6 +308,18 @@ int ul_deserialize_battery(ul_battery_t *bat, const uint8_t *payload_buf);
 
 int ul_serialize_rc_input(const ul_rc_input_t *rc, uint8_t *payload_buf);
 int ul_deserialize_rc_input(ul_rc_input_t *rc, const uint8_t *payload_buf);
+
+int ul_serialize_command(const ul_command_t *cmd, uint8_t *payload_buf);
+int ul_deserialize_command(ul_command_t *cmd, const uint8_t *payload_buf);
+
+int ul_serialize_command_ack(const ul_command_ack_t *ack, uint8_t *payload_buf);
+int ul_deserialize_command_ack(ul_command_ack_t *ack, const uint8_t *payload_buf);
+
+int ul_serialize_mode_change(const ul_mode_change_t *mode, uint8_t *payload_buf);
+int ul_deserialize_mode_change(ul_mode_change_t *mode, const uint8_t *payload_buf);
+
+int ul_serialize_mission_item(const ul_mission_item_t *item, uint8_t *payload_buf);
+int ul_deserialize_mission_item(ul_mission_item_t *item, const uint8_t *payload_buf);
 
 /* CRC Computations */
 void ul_crc_init(uint16_t *crcAccum);

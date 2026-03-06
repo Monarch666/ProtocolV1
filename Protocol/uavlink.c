@@ -53,13 +53,16 @@ void ul_crc_accumulate(uint8_t data, uint16_t *crcAccum)
 
 /* CRC seed lookup table indexed by message ID (0 = unknown) */
 static const uint8_t ul_crc_seed_table[] = {
-    /* 0x00 HEARTBEAT */ 50,
-    /* 0x01 ATTITUDE  */ 39,
-    /* 0x02 GPS_RAW   */ 24,
-    /* 0x03 BATTERY   */ 154,
-    /* 0x04 RC_INPUT  */ 89,
-    /* 0x05 (unused)  */ 0,
-    /* 0x06 CMD       */ 217, /* Distinct seed so cmd msg_id corruption is detectable */
+    /* 0x00 HEARTBEAT    */ 50,
+    /* 0x01 ATTITUDE     */ 39,
+    /* 0x02 GPS_RAW      */ 24,
+    /* 0x03 BATTERY      */ 154,
+    /* 0x04 RC_INPUT     */ 89,
+    /* 0x05 (unused)     */ 0,
+    /* 0x06 CMD          */ 217,
+    /* 0x07 CMD_ACK      */ 143,
+    /* 0x08 MODE_CHANGE  */ 178,
+    /* 0x09 MISSION_ITEM */ 62,
 };
 #define UL_CRC_SEED_TABLE_SIZE (sizeof(ul_crc_seed_table) / sizeof(ul_crc_seed_table[0]))
 
@@ -478,6 +481,112 @@ int ul_deserialize_rc_input(ul_rc_input_t *rc, const uint8_t *in)
     rc->rssi = in[16];
     rc->quality = in[17];
     return 18;
+}
+
+/* --- Command Message Serialization --- */
+
+int ul_serialize_command(const ul_command_t *cmd, uint8_t *out)
+{
+    if (!cmd || !out)
+        return UL_ERR_NULL_POINTER;
+
+    pack_uint16(&out[0], cmd->command_id);
+    pack_uint16(&out[2], cmd->param1);
+    pack_uint16(&out[4], cmd->param2);
+    pack_uint16(&out[6], cmd->param3);
+    return 8;
+}
+
+int ul_deserialize_command(ul_command_t *cmd, const uint8_t *in)
+{
+    if (!cmd || !in)
+        return UL_ERR_NULL_POINTER;
+
+    cmd->command_id = unpack_uint16(&in[0]);
+    cmd->param1 = unpack_uint16(&in[2]);
+    cmd->param2 = unpack_uint16(&in[4]);
+    cmd->param3 = unpack_uint16(&in[6]);
+    return 8;
+}
+
+/* --- Command ACK Serialization --- */
+
+int ul_serialize_command_ack(const ul_command_ack_t *ack, uint8_t *out)
+{
+    if (!ack || !out)
+        return UL_ERR_NULL_POINTER;
+
+    pack_uint16(&out[0], ack->command_id);
+    out[2] = ack->result;
+    out[3] = ack->progress;
+    return 4;
+}
+
+int ul_deserialize_command_ack(ul_command_ack_t *ack, const uint8_t *in)
+{
+    if (!ack || !in)
+        return UL_ERR_NULL_POINTER;
+
+    ack->command_id = unpack_uint16(&in[0]);
+    ack->result = in[2];
+    ack->progress = in[3];
+    return 4;
+}
+
+/* --- Mode Change Serialization --- */
+
+int ul_serialize_mode_change(const ul_mode_change_t *mode, uint8_t *out)
+{
+    if (!mode || !out)
+        return UL_ERR_NULL_POINTER;
+
+    out[0] = mode->mode;
+    out[1] = mode->reserved;
+    return 2;
+}
+
+int ul_deserialize_mode_change(ul_mode_change_t *mode, const uint8_t *in)
+{
+    if (!mode || !in)
+        return UL_ERR_NULL_POINTER;
+
+    mode->mode = in[0];
+    mode->reserved = in[1];
+    return 2;
+}
+
+/* --- Mission Item Serialization --- */
+
+int ul_serialize_mission_item(const ul_mission_item_t *item, uint8_t *out)
+{
+    if (!item || !out)
+        return UL_ERR_NULL_POINTER;
+
+    pack_uint16(&out[0], item->seq);
+    out[2] = item->frame;
+    out[3] = item->command;
+    pack_int32(&out[4], item->lat);
+    pack_int32(&out[8], item->lon);
+    pack_int32(&out[12], item->alt);
+    pack_uint16(&out[16], item->speed);
+    pack_uint16(&out[18], item->loiter_time);
+    return 20;
+}
+
+int ul_deserialize_mission_item(ul_mission_item_t *item, const uint8_t *in)
+{
+    if (!item || !in)
+        return UL_ERR_NULL_POINTER;
+
+    item->seq = unpack_uint16(&in[0]);
+    item->frame = in[2];
+    item->command = in[3];
+    item->lat = unpack_int32(&in[4]);
+    item->lon = unpack_int32(&in[8]);
+    item->alt = unpack_int32(&in[12]);
+    item->speed = unpack_uint16(&in[16]);
+    item->loiter_time = unpack_uint16(&in[18]);
+    return 20;
 }
 
 /* --- Nonce Management Implementation --- */
@@ -903,9 +1012,12 @@ ul_encrypt_policy_t ul_get_encrypt_policy(uint16_t msg_id)
     case UL_MSG_GPS_RAW:   return UL_ENCRYPT_OPTIONAL;
     case UL_MSG_BATTERY:   return UL_ENCRYPT_OPTIONAL;
     case UL_MSG_RC_INPUT:  return UL_ENCRYPT_ALWAYS;
-    case UL_MSG_CMD:       return UL_ENCRYPT_ALWAYS;
-    case UL_MSG_BATCH:     return UL_ENCRYPT_OPTIONAL;
-    default:               return UL_ENCRYPT_OPTIONAL;
+    case UL_MSG_CMD:          return UL_ENCRYPT_ALWAYS;
+    case UL_MSG_CMD_ACK:      return UL_ENCRYPT_ALWAYS;
+    case UL_MSG_MODE_CHANGE:  return UL_ENCRYPT_ALWAYS;
+    case UL_MSG_MISSION_ITEM: return UL_ENCRYPT_ALWAYS;
+    case UL_MSG_BATCH:        return UL_ENCRYPT_OPTIONAL;
+    default:                  return UL_ENCRYPT_OPTIONAL;
     }
 }
 

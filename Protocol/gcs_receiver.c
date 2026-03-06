@@ -1,10 +1,11 @@
 /*
- * UAVLink Phase 2 GCS Receiver - Network Test
+ * UAVLink Bidirectional GCS (Ground Control Station)
  *
- * Uses Phase 2 optimizations:
- * - Zero-copy parser (2x faster parsing)
- * - Memory pool allocation (O(1) deterministic)
- * - Fast API combining all optimizations
+ * Receives telemetry on UDP port 14550 (UAV -> GCS)
+ * Sends commands on UDP port 14551 (GCS -> UAV)
+ * Receives ACKs on UDP port 14550 (UAV -> GCS)
+ *
+ * Interactive command menu via stdin (non-blocking)
  */
 
 #include "uavlink.h"
@@ -16,200 +17,315 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
+#include <conio.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <sys/select.h>
 #endif
 
-// Pre-shared encryption key (32 bytes for ChaCha20)
+// Pre-shared encryption key (must match UAV)
 static const uint8_t SHARED_KEY[32] = {
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
     0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
     0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20};
 
-// Statistics
-typedef struct
+// Flight mode name lookup
+static const char *mode_names[] = {
+    "MANUAL", "STABILIZE", "ALT_HOLD", "LOITER",
+    "AUTO", "RTL", "LAND"};
+
+static const char *get_mode_name(uint8_t mode)
 {
-    uint32_t packets_received;
-    uint32_t parse_complete;
-    uint32_t parse_errors;
-    uint32_t crc_errors;
-    uint32_t bytes_received;
-    uint64_t total_parse_time_us;
-    uint32_t pool_peak_usage;
-} stats_t;
+    if (mode <= UL_MODE_LAND)
+        return mode_names[mode];
+    return "UNKNOWN";
+}
 
-static stats_t g_stats = {0};
+// ACK result name lookup
+static const char *get_ack_result(uint8_t result)
+{
+    switch (result)
+    {
+    case UL_ACK_OK:
+        return "OK";
+    case UL_ACK_REJECTED:
+        return "REJECTED";
+    case UL_ACK_UNSUPPORTED:
+        return "UNSUPPORTED";
+    case UL_ACK_FAILED:
+        return "FAILED";
+    case UL_ACK_IN_PROGRESS:
+        return "IN_PROGRESS";
+    default:
+        return "UNKNOWN";
+    }
+}
 
-// Timing functions
+static void print_menu(void)
+{
+    printf("\n--- Command Menu ---\n");
+    printf("  1: ARM         2: DISARM\n");
+    printf("  3: TAKEOFF     4: LAND\n");
+    printf("  5: RTL         6: EMERGENCY STOP\n");
+    printf("  7: Mode Change 8: Send Waypoint\n");
+    printf("  9: Upload Mission (fragmented)\n");
+    printf("  0: Show Menu  Ctrl+C: Quit\n");
+    printf(">>> ");
+    fflush(stdout);
+}
+
+// Send a command packet to the UAV
+static int send_command_packet(int sock, struct sockaddr_in *dest,
+                               const ul_header_t *header, const uint8_t *payload,
+                               ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
+                               ul_crypto_ctx_t *crypto_ctx)
+{
+    uint8_t *packet_buf = NULL;
+    int packet_len = ul_pack_fast(pool, header, payload, SHARED_KEY,
+                                  nonce_state, crypto_ctx, &packet_buf);
+
+    if (packet_len > 0 && packet_buf)
+    {
+        sendto(sock, (char *)packet_buf, packet_len, 0,
+               (struct sockaddr *)dest, sizeof(*dest));
+        ul_mempool_free(pool, packet_buf);
+        return packet_len;
+    }
+    return -1;
+}
+
+// Send a generic command (arm, disarm, takeoff, land, etc.)
+static void send_cmd(int sock, struct sockaddr_in *dest,
+                     uint16_t cmd_id, uint16_t param1,
+                     ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
+                     ul_crypto_ctx_t *crypto_ctx, uint16_t *seq)
+{
+    ul_command_t cmd = {0};
+    cmd.command_id = cmd_id;
+    cmd.param1 = param1;
+
+    uint8_t payload[32];
+    int payload_len = ul_serialize_command(&cmd, payload);
+
+    ul_header_t header = {0};
+    header.payload_len = payload_len;
+    header.priority = UL_PRIO_HIGH;
+    header.stream_type = UL_STREAM_CMD;
+    header.encrypted = true;
+    header.sequence = (*seq)++;
+    header.sys_id = 255; // GCS
+    header.comp_id = 0;
+    header.target_sys_id = 1; // UAV
+    header.msg_id = UL_MSG_CMD;
+
+    int sent = send_command_packet(sock, dest, &header, payload, pool, nonce_state, crypto_ctx);
+    if (sent > 0)
+        printf("Sent command 0x%04X (%d bytes)\n", cmd_id, sent);
+}
+
+// Send a mode change
+static void send_mode_change(int sock, struct sockaddr_in *dest,
+                             uint8_t mode,
+                             ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
+                             ul_crypto_ctx_t *crypto_ctx, uint16_t *seq)
+{
+    ul_mode_change_t mc = {0};
+    mc.mode = mode;
+
+    uint8_t payload[32];
+    int payload_len = ul_serialize_mode_change(&mc, payload);
+
+    ul_header_t header = {0};
+    header.payload_len = payload_len;
+    header.priority = UL_PRIO_HIGH;
+    header.stream_type = UL_STREAM_CMD;
+    header.encrypted = true;
+    header.sequence = (*seq)++;
+    header.sys_id = 255;
+    header.comp_id = 0;
+    header.target_sys_id = 1;
+    header.msg_id = UL_MSG_MODE_CHANGE;
+
+    int sent = send_command_packet(sock, dest, &header, payload, pool, nonce_state, crypto_ctx);
+    if (sent > 0)
+        printf("Sent mode change -> %s (%d bytes)\n", get_mode_name(mode), sent);
+}
+
+// Send a mission waypoint
+static void send_waypoint(int sock, struct sockaddr_in *dest,
+                          uint16_t wp_seq,
+                          ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
+                          ul_crypto_ctx_t *crypto_ctx, uint16_t *seq)
+{
+    ul_mission_item_t item = {0};
+    item.seq = wp_seq;
+    item.frame = 0; // Global
+    item.command = 0; // Navigate
+    item.lat = 47670000 + (wp_seq * 1000);
+    item.lon = -122320000 + (wp_seq * 1000);
+    item.alt = 50000 + (wp_seq * 10000); // 50m + 10m per waypoint
+    item.speed = 500; // 5 m/s
+
+    uint8_t payload[32];
+    int payload_len = ul_serialize_mission_item(&item, payload);
+
+    ul_header_t header = {0};
+    header.payload_len = payload_len;
+    header.priority = UL_PRIO_HIGH;
+    header.stream_type = UL_STREAM_CMD;
+    header.encrypted = true;
+    header.sequence = (*seq)++;
+    header.sys_id = 255;
+    header.comp_id = 0;
+    header.target_sys_id = 1;
+    header.msg_id = UL_MSG_MISSION_ITEM;
+
+    int sent = send_command_packet(sock, dest, &header, payload, pool, nonce_state, crypto_ctx);
+    if (sent > 0)
+        printf("Sent waypoint #%u: lat=%d lon=%d alt=%dmm (%d bytes)\n",
+               wp_seq, item.lat, item.lon, item.alt, sent);
+}
+
+// Check for keyboard input (non-blocking)
+static int key_available(void)
+{
 #ifdef _WIN32
-#include <windows.h>
-static uint64_t get_time_us(void)
-{
-    static LARGE_INTEGER freq = {0};
-    if (freq.QuadPart == 0)
-        QueryPerformanceFrequency(&freq); // Cached after first call
-    LARGE_INTEGER counter;
-    QueryPerformanceCounter(&counter);
-    return (counter.QuadPart * 1000000) / freq.QuadPart;
-}
+    return _kbhit();
 #else
-#include <sys/time.h>
-static uint64_t get_time_us(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000000ULL + tv.tv_usec;
-}
+    struct timeval tv = {0, 0};
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(0, &fds);
+    return select(1, &fds, NULL, NULL, &tv) > 0;
 #endif
-
-void process_heartbeat(const uint8_t *payload, uint16_t len)
-{
-    ul_heartbeat_t hb;
-    ul_deserialize_heartbeat(&hb, payload);
-
-    printf("  [HEARTBEAT] Status=0x%02X Type=%u Mode=0x%02X\n",
-           hb.system_status, hb.system_type, hb.base_mode);
 }
 
-void process_attitude(const uint8_t *payload, uint16_t len)
+static int get_key(void)
 {
-    ul_attitude_t att;
-    ul_deserialize_attitude(&att, payload);
-
-    printf("  [ATTITUDE] Roll=%.2f Pitch=%.2f Yaw=%.2f\n",
-           att.roll, att.pitch, att.yaw);
+#ifdef _WIN32
+    return _getch();
+#else
+    return getchar();
+#endif
 }
 
-void process_gps(const uint8_t *payload, uint16_t len)
+// Send a fragmented mission plan (5 waypoints packed into one large payload)
+static void send_mission_fragmented(int sock, struct sockaddr_in *dest,
+                                    ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
+                                    ul_crypto_ctx_t *crypto_ctx, uint16_t *seq)
 {
-    ul_gps_raw_t gps;
-    ul_deserialize_gps_raw(&gps, payload);
+    // Pack 5 waypoints into a single large payload
+    uint8_t big_payload[1024];
+    int offset = 0;
 
-    printf("  [GPS] Lat=%d Lon=%d Alt=%d Fix=%u Sats=%u\n",
-           gps.lat, gps.lon, gps.alt, gps.fix_type, gps.satellites);
-}
+    // First byte = number of waypoints
+    big_payload[offset++] = 5;
 
-void process_battery(const uint8_t *payload, uint16_t len)
-{
-    ul_battery_t bat;
-    ul_deserialize_battery(&bat, payload);
-
-    printf("  [BATTERY] Voltage=%umV Current=%dmA Remaining=%d%% Cells=%u\n",
-           bat.voltage, bat.current, bat.remaining, bat.cell_count);
-}
-
-void process_rc(const uint8_t *payload, uint16_t len)
-{
-    ul_rc_input_t rc;
-    ul_deserialize_rc_input(&rc, payload);
-
-    printf("  [RC] Ch1=%u Ch2=%u Ch3=%u Ch4=%u RSSI=%u%%\n",
-           rc.channels[0], rc.channels[1], rc.channels[2], rc.channels[3], rc.rssi);
-}
-
-void process_packet(ul_header_t *header, const uint8_t *payload, uint16_t payload_len)
-{
-    g_stats.parse_complete++;
-
-    printf("Packet #%u: MsgID=0x%03X Seq=%u Encrypted=%s PayloadLen=%u\n",
-           g_stats.parse_complete,
-           header->msg_id,
-           header->sequence,
-           header->encrypted ? "Yes" : "No",
-           payload_len);
-
-    // Dispatch based on message ID
-    switch (header->msg_id)
+    for (int i = 0; i < 5; i++)
     {
-    case UL_MSG_HEARTBEAT:
-        process_heartbeat(payload, payload_len);
-        break;
-    case UL_MSG_ATTITUDE:
-        process_attitude(payload, payload_len);
-        break;
-    case UL_MSG_GPS_RAW:
-        process_gps(payload, payload_len);
-        break;
-    case UL_MSG_BATTERY:
-        process_battery(payload, payload_len);
-        break;
-    case UL_MSG_RC_INPUT:
-        process_rc(payload, payload_len);
-        break;
-    case UL_MSG_BATCH: {
-        ul_batch_t batch;
-        memset(&batch, 0, sizeof(batch));
-        int batch_err = ul_deserialize_batch(payload, payload_len, &batch);
-        if (batch_err == 0) {
-            printf("  [BATCH] %u sub-messages\n", batch.num_messages);
-            for (uint8_t bi = 0; bi < batch.num_messages; bi++) {
-                ul_header_t sub_hdr;
-                memset(&sub_hdr, 0, sizeof(sub_hdr));
-                sub_hdr.msg_id      = batch.messages[bi].msg_id;
-                sub_hdr.payload_len = batch.messages[bi].length;
-                sub_hdr.sequence    = header->sequence;
-                sub_hdr.sys_id      = header->sys_id;
-                sub_hdr.comp_id     = header->comp_id;
-                process_packet(&sub_hdr, batch.messages[bi].data,
-                               batch.messages[bi].length);
-            }
-        } else {
-            printf("  [BATCH] Deserialization error: %d\n", batch_err);
+        ul_mission_item_t wp = {0};
+        wp.seq = i;
+        wp.frame = 0; // Global
+        wp.command = 0; // Navigate
+        wp.lat = 47670000 + (i * 5000);      // Spread waypoints 0.0005 deg apart
+        wp.lon = -122320000 + (i * 5000);
+        wp.alt = 50000 + (i * 10000);         // 50m, 60m, 70m, 80m, 90m
+        wp.speed = 500;                       // 5 m/s
+        wp.loiter_time = (i == 2) ? 30 : 0;   // Loiter 30s at WP#2
+
+        int len = ul_serialize_mission_item(&wp, big_payload + offset);
+        offset += len; // 20 bytes each
+    }
+
+    printf("Mission payload: %d bytes (%d waypoints x 20 bytes + 1 header)\n", offset, 5);
+
+    // Fragment the mission payload
+    ul_header_t base_header = {0};
+    base_header.payload_len = offset;
+    base_header.priority = UL_PRIO_HIGH;
+    base_header.stream_type = UL_STREAM_MISSION;
+    base_header.encrypted = true;
+    base_header.sys_id = 255;        // GCS
+    base_header.comp_id = 0;
+    base_header.target_sys_id = 1;   // UAV
+    base_header.msg_id = UL_MSG_MISSION_ITEM;
+
+    ul_fragment_set_t frags;
+    int num_frags = ul_fragment_split(&base_header, big_payload, offset, &frags);
+
+    if (num_frags <= 0)
+    {
+        printf("ERROR: Fragment split failed (%d)\n", num_frags);
+        return;
+    }
+
+    printf("Split into %d fragments:\n", num_frags);
+
+    // Send each fragment
+    int total_sent = 0;
+    for (int i = 0; i < num_frags; i++)
+    {
+        frags.headers[i].sequence = (*seq)++;
+
+        int sent = send_command_packet(sock, dest, &frags.headers[i],
+                                       frags.payloads[i], pool, nonce_state, crypto_ctx);
+        if (sent > 0)
+        {
+            printf("  Fragment %d/%d: %d payload bytes, %d wire bytes\n",
+                   i + 1, num_frags, frags.payload_lens[i], sent);
+            total_sent += sent;
         }
-        break;
+
+        // Small delay between fragments to avoid overwhelming receiver
+#ifdef _WIN32
+        Sleep(10);
+#else
+        usleep(10000);
+#endif
     }
-    default:
-        printf("  [UNKNOWN] Message ID 0x%03X\n", header->msg_id);
-        break;
-    }
+
+    printf("Mission upload complete: %d fragments, %d total wire bytes\n", num_frags, total_sent);
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
-    printf("=== UAVLink Phase 2 GCS Receiver ===\n");
-    printf("Using Phase 2 Optimizations:\n");
-    printf("  - Zero-copy parser (2x speed)\n");
-    printf("  - Memory pool (O(1) allocation)\n");
-    printf("  - Hardware crypto detection\n\n");
+    printf("=== UAVLink Bidirectional GCS ===\n\n");
 
-    // Detect hardware crypto capabilities
-    const ul_crypto_caps_t *caps = ul_crypto_get_caps();
-    printf("Crypto Backend: ");
-    switch (caps->backend)
+    // Determine UAV IP
+    const char *uav_ip = "127.0.0.1";
+    if (argc >= 2)
     {
-    case UL_CRYPTO_SOFTWARE:
-        printf("Software\n");
-        break;
-    case UL_CRYPTO_ARM_NEON:
-        printf("ARM NEON (%ux speedup)\n", caps->speedup_factor);
-        break;
-    case UL_CRYPTO_X86_SSE:
-        printf("x86 SSE (%ux speedup)\n", caps->speedup_factor);
-        break;
-    case UL_CRYPTO_X86_AVX2:
-        printf("x86 AVX2 (%ux speedup)\n", caps->speedup_factor);
-        break;
-    default:
-        printf("Unknown\n");
+        uav_ip = argv[1];
     }
-    printf("\n");
+    else
+    {
+        printf("Usage: %s <uav_ip>\n", argv[0]);
+        printf("No IP provided, defaulting to 127.0.0.1\n\n");
+    }
 
-    // Initialize memory pool
+    // Initialize systems
     ul_mempool_t pool;
     ul_mempool_init(&pool);
-    printf("Initialized memory pool: %d buffers x %d bytes = %d KB\n",
+
+    ul_nonce_state_t nonce_state;
+    ul_nonce_init(&nonce_state);
+
+    ul_crypto_ctx_t crypto_ctx;
+    ul_crypto_ctx_init(&crypto_ctx);
+
+    printf("Crypto Backend: Software\n");
+    printf("Memory Pool: %d buffers x %d bytes = %d KB\n\n",
            UL_MEMPOOL_NUM_BUFFERS, UL_MEMPOOL_BUFFER_SIZE,
            (UL_MEMPOOL_NUM_BUFFERS * UL_MEMPOOL_BUFFER_SIZE) / 1024);
 
-    // Initialize zero-copy parser
-    ul_parser_zerocopy_t parser;
-    ul_parser_zerocopy_init(&parser);
-
-// Setup UDP socket
+// Setup Winsock
 #ifdef _WIN32
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -219,10 +335,11 @@ int main(void)
     }
 #endif
 
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0)
+    // Socket for receiving telemetry + ACKs (port 14550)
+    int recv_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (recv_sock < 0)
     {
-        printf("ERROR: Failed to create socket\n");
+        printf("ERROR: Failed to create receive socket\n");
         return 1;
     }
 
@@ -232,200 +349,263 @@ int main(void)
     recv_addr.sin_port = htons(14550);
     recv_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(sock, (struct sockaddr *)&recv_addr, sizeof(recv_addr)) < 0)
+    if (bind(recv_sock, (struct sockaddr *)&recv_addr, sizeof(recv_addr)) < 0)
     {
         printf("ERROR: Failed to bind to port 14550\n");
-#ifdef _WIN32
-        closesocket(sock);
-#else
-        close(sock);
-#endif
         return 1;
     }
 
-    printf("Listening on UDP port 14550...\n");
-    printf("Press Ctrl+C to stop\n\n");
+    // Set receive socket non-blocking
+#ifdef _WIN32
+    u_long iMode = 1;
+    ioctlsocket(recv_sock, FIONBIO, &iMode);
+#else
+    int flags = fcntl(recv_sock, F_GETFL, 0);
+    fcntl(recv_sock, F_SETFL, flags | O_NONBLOCK);
+#endif
 
-    uint8_t recv_buffer[2048];
-    uint8_t *parse_output_buffer = NULL;
+    // Socket for sending commands (port 14551)
+    int cmd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (cmd_sock < 0)
+    {
+        printf("ERROR: Failed to create command socket\n");
+        return 1;
+    }
 
+    struct sockaddr_in uav_cmd_addr;
+    memset(&uav_cmd_addr, 0, sizeof(uav_cmd_addr));
+    uav_cmd_addr.sin_family = AF_INET;
+    uav_cmd_addr.sin_port = htons(14551);
+    uav_cmd_addr.sin_addr.s_addr = inet_addr(uav_ip);
+
+    printf("Listening on UDP port 14550 (telemetry + ACKs)\n");
+    printf("Sending commands to %s:14551\n", uav_ip);
+    print_menu();
+
+    // Parser
+    ul_parser_zerocopy_t parser;
+    ul_parser_zerocopy_init(&parser);
+
+    uint32_t packets_received = 0;
+    uint32_t parse_errors = 0;
+    uint32_t acks_received = 0;
+    uint16_t cmd_sequence = 0;
+    uint16_t next_wp_seq = 0;
+
+    uint8_t recv_buf[2048];
+    uint8_t parse_output[512];
+    uint32_t last_telem_print = 0;
+
+    // Main loop
     while (1)
     {
-        // Receive UDP packet
-        struct sockaddr_in sender_addr;
-        int sender_len = sizeof(sender_addr);
-
-        int recv_len = recvfrom(sock, (char *)recv_buffer, sizeof(recv_buffer), 0,
-                                (struct sockaddr *)&sender_addr, &sender_len);
-
-        if (recv_len < 0)
+        // --- Check for keyboard input (non-blocking) ---
+        if (key_available())
         {
-            continue;
-        }
-
-        // Validate packet size (UAVLink: 10 bytes minimum, 4122 max with large payloads)
-        if (recv_len < 10)
-        {
-            continue; // Reject: too small
-        }
-
-        // Validate Start of Frame marker
-        if (recv_buffer[0] != 0xA5)
-        {
-            continue; // Not a UAVLink packet
-        }
-
-        g_stats.packets_received++;
-        g_stats.bytes_received += recv_len;
-
-        // Allocate output buffer from pool on first byte
-        if (!parse_output_buffer)
-        {
-            parse_output_buffer = (uint8_t *)ul_mempool_alloc(&pool);
-            if (!parse_output_buffer)
+            int key = get_key();
+            switch (key)
             {
-                printf("ERROR: Memory pool exhausted!\n");
+            case '1':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_ARM, 0,
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '2':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_DISARM, 0,
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '3':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_TAKEOFF, 1000, // 10m
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '4':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_LAND, 0,
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '5':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_RTL, 0,
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '6':
+                printf("\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, UL_CMD_EMERGENCY, 0,
+                         &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            case '7':
+            {
+                printf("\nModes: 0=MANUAL 1=STABILIZE 2=ALT_HOLD 3=LOITER 4=AUTO 5=RTL 6=LAND\n");
+                printf("Enter mode number: ");
+                fflush(stdout);
+                int mode_key = get_key();
+                if (mode_key >= '0' && mode_key <= '6')
+                {
+                    printf("%c\n", mode_key);
+                    send_mode_change(cmd_sock, &uav_cmd_addr, mode_key - '0',
+                                     &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                }
+                else
+                {
+                    printf("\nInvalid mode\n");
+                }
+                break;
+            }
+            case '8':
+            {
+                printf("\n");
+                send_waypoint(cmd_sock, &uav_cmd_addr, next_wp_seq++,
+                              &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            }
+            case '9':
+            {
+                printf("\n--- Uploading Fragmented Mission (5 waypoints) ---\n");
+                send_mission_fragmented(cmd_sock, &uav_cmd_addr,
+                                        &pool, &nonce_state, &crypto_ctx, &cmd_sequence);
+                break;
+            }
+            case '0':
+                print_menu();
+                break;
+            default:
                 break;
             }
         }
 
-        // Parse all bytes in the received packet
-        uint64_t parse_start = get_time_us();
+        // --- Receive telemetry + ACKs (non-blocking) ---
+        struct sockaddr_in sender_addr;
+        int sender_len = sizeof(sender_addr);
+        int recv_len = recvfrom(recv_sock, (char *)recv_buf, sizeof(recv_buf), 0,
+                                (struct sockaddr *)&sender_addr, &sender_len);
 
-        for (int i = 0; i < recv_len; i++)
+        if (recv_len > 0)
         {
-            int result = ul_parse_char_zerocopy(&parser, recv_buffer[i], parse_output_buffer);
+            // Parse received packet byte by byte
+            ul_parser_zerocopy_init(&parser);
+
+            int result = 0;
+            for (int i = 0; i < recv_len && result <= 0; i++)
+            {
+                result = ul_parse_char_zerocopy(&parser, recv_buf[i], parse_output);
+            }
 
             if (result == 1)
             {
-                // Complete packet parsed!
-                uint64_t parse_end = get_time_us();
-                g_stats.total_parse_time_us += (parse_end - parse_start);
+                packets_received++;
 
-                // Decode header from parser state
-                ul_header_t header = {0};
-                header.msg_id = parser.msg_id;
-                header.payload_len = parser.payload_len;
-                header.encrypted = (parser.header_buf[3] & UL_FLAG_ENCRYPTED) != 0;
-                header.sequence = g_stats.parse_complete;
+                // Get header info
+                uint16_t msg_id = parser.msg_id;
+                uint16_t payload_len = parser.payload_len;
+                bool encrypted = (parser.header_buf[3] & UL_FLAG_ENCRYPTED) != 0;
 
-                // Decrypt payload if encrypted using ChaCha20-Poly1305 AEAD
-                if (header.encrypted && parser.payload_len > 0)
+                // Handle decryption
+                if (encrypted && payload_len > 0)
                 {
-                    // Build 24-byte nonce for monocypher AEAD (from 8-byte packet nonce)
                     uint8_t nonce24[24] = {0};
                     memcpy(nonce24, parser.cipher_nonce, 8);
 
-                    // Header length for AAD (base 4 + ext 4 + nonce 8 = 16 bytes)
-                    size_t header_len = 16;
+                    uint8_t stream_type = ((parser.header_buf[1] & 0x3) << 2) |
+                                          ((parser.header_buf[2] >> 6) & 0x3);
+                    bool is_cmd = (stream_type == UL_STREAM_CMD || stream_type == UL_STREAM_CMD_ACK);
+                    size_t header_len = (is_cmd ? 9 : 8) + 8;
 
-                    // Decrypt and verify MAC using AEAD
-                    // Returns 0 on success, -1 if MAC verification fails
                     int auth_result = crypto_aead_unlock(
-                        parse_output_buffer, /* Output: plaintext */
-                        parser.cipher_tag,   /* Input: 16-byte MAC tag */
-                        SHARED_KEY,          /* 256-bit key */
-                        nonce24,             /* 192-bit nonce (8 bytes + 16 zero pad) */
-                        parser.header_buf,   /* AAD: entire header */
-                        header_len,          /* AAD length */
-                        parse_output_buffer, /* Input: ciphertext */
-                        parser.payload_len); /* Ciphertext length */
+                        parse_output, parser.cipher_tag, SHARED_KEY, nonce24,
+                        parser.header_buf, header_len,
+                        parse_output, payload_len);
 
                     if (auth_result != 0)
                     {
-                        // MAC verification failed - skip this packet
-                        ul_mempool_free(&pool, parse_output_buffer);
-                        parse_output_buffer = (uint8_t *)ul_mempool_alloc(&pool);
-                        parse_start = get_time_us();
-                        g_stats.crc_errors++; // Count as authentication error
+                        parse_errors++;
                         continue;
                     }
                 }
 
-                // Process the packet
-                process_packet(&header, parse_output_buffer, parser.payload_len);
+                // Process message
+                switch (msg_id)
+                {
+                case UL_MSG_HEARTBEAT:
+                {
+                    ul_heartbeat_t hb;
+                    ul_deserialize_heartbeat(&hb, parse_output);
+                    bool armed = (hb.base_mode & 0x80) != 0;
+                    uint8_t mode = (hb.base_mode >> 2) & 0x07;
 
-                // Free buffer and allocate new one for next packet
-                ul_mempool_free(&pool, parse_output_buffer);
-                parse_output_buffer = (uint8_t *)ul_mempool_alloc(&pool);
-
-                parse_start = get_time_us(); // Reset timer for next packet
+                    // Print heartbeat only every 5 seconds (not every 1s)
+                    if (packets_received - last_telem_print >= 30)
+                    {
+                        printf("[HB] %s | %s | Status:0x%X | Pkts:%u ACKs:%u Errors:%u\n",
+                               armed ? "ARMED" : "DISARMED",
+                               get_mode_name(mode),
+                               hb.system_status,
+                               packets_received, acks_received, parse_errors);
+                        last_telem_print = packets_received;
+                    }
+                    break;
+                }
+                case UL_MSG_ATTITUDE:
+                {
+                    // Silently receive — too frequent to print
+                    break;
+                }
+                case UL_MSG_GPS_RAW:
+                {
+                    // Silently receive
+                    break;
+                }
+                case UL_MSG_BATTERY:
+                {
+                    ul_battery_t bat;
+                    ul_deserialize_battery(&bat, parse_output);
+                    printf("[BAT] %.1fV  %.1fA  %d%%\n",
+                           bat.voltage / 1000.0, bat.current / -100.0, bat.remaining);
+                    break;
+                }
+                case UL_MSG_CMD_ACK:
+                {
+                    acks_received++;
+                    ul_command_ack_t ack;
+                    ul_deserialize_command_ack(&ack, parse_output);
+                    printf("[ACK] Cmd=0x%04X Result=%s",
+                           ack.command_id, get_ack_result(ack.result));
+                    if (ack.result == UL_ACK_IN_PROGRESS)
+                        printf(" Progress=%u%%", ack.progress);
+                    printf("\n");
+                    printf(">>> ");
+                    fflush(stdout);
+                    break;
+                }
+                default:
+                    // Other telemetry silently received
+                    break;
+                }
             }
             else if (result < 0)
             {
-                // Parse error
-                g_stats.parse_errors++;
-                if (result == -2)
-                {
-                    g_stats.crc_errors++;
-                }
-
-                // Free buffer and allocate new one
-                if (parse_output_buffer)
-                {
-                    ul_mempool_free(&pool, parse_output_buffer);
-                }
-                parse_output_buffer = (uint8_t *)ul_mempool_alloc(&pool);
+                parse_errors++;
             }
         }
 
-        // Update pool statistics
-        uint32_t alloc_count, free_count, peak_usage, current_usage;
-        ul_mempool_stats(&pool, &alloc_count, &free_count, &peak_usage, &current_usage);
-        if (peak_usage > g_stats.pool_peak_usage)
-        {
-            g_stats.pool_peak_usage = peak_usage;
-        }
-
-        // Print statistics every 100 packets
-        if (g_stats.packets_received % 100 == 0)
-        {
-            printf("\n--- Statistics (after %u UDP packets) ---\n", g_stats.packets_received);
-            printf("Packets parsed: %u\n", g_stats.parse_complete);
-            printf("Parse errors: %u\n", g_stats.parse_errors);
-            printf("CRC errors: %u\n", g_stats.crc_errors);
-            printf("Bytes received: %u\n", g_stats.bytes_received);
-            if (g_stats.parse_complete > 0)
-            {
-                printf("Avg parse time: %lu us/packet\n",
-                       (unsigned long)(g_stats.total_parse_time_us / g_stats.parse_complete));
-            }
-            printf("Memory pool peak usage: %u/%u buffers\n",
-                   g_stats.pool_peak_usage, UL_MEMPOOL_NUM_BUFFERS);
-            printf("Memory pool current: %u allocs, %u frees, %u in use\n",
-                   alloc_count, free_count, current_usage);
-            printf("\n");
-        }
-    }
-
-    // Cleanup
-    if (parse_output_buffer)
-    {
-        ul_mempool_free(&pool, parse_output_buffer);
-    }
-
+// Small sleep to avoid busy-waiting
 #ifdef _WIN32
-    closesocket(sock);
+        Sleep(10);
+#else
+        usleep(10000);
+#endif
+    }
+
+// Cleanup
+#ifdef _WIN32
+    closesocket(recv_sock);
+    closesocket(cmd_sock);
     WSACleanup();
 #else
-    close(sock);
+    close(recv_sock);
+    close(cmd_sock);
 #endif
-
-    printf("\n=== Final Statistics ===\n");
-    printf("UDP packets received: %u\n", g_stats.packets_received);
-    printf("Packets parsed: %u\n", g_stats.parse_complete);
-    printf("Parse errors: %u\n", g_stats.parse_errors);
-    printf("CRC errors: %u\n", g_stats.crc_errors);
-    printf("Success rate: %.2f%%\n",
-           g_stats.packets_received > 0 ? (100.0 * g_stats.parse_complete / g_stats.packets_received) : 0.0);
-    if (g_stats.parse_complete > 0)
-    {
-        printf("Average parse time: %lu us/packet\n",
-               (unsigned long)(g_stats.total_parse_time_us / g_stats.parse_complete));
-    }
-    printf("Memory pool peak usage: %u/%u buffers (%.1f%%)\n",
-           g_stats.pool_peak_usage, UL_MEMPOOL_NUM_BUFFERS,
-           100.0 * g_stats.pool_peak_usage / UL_MEMPOOL_NUM_BUFFERS);
 
     return 0;
 }
