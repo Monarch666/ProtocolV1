@@ -21,3 +21,5 @@ test_uavlink
 # OS files
 .DS_Store
 Thumbs.db
+
+Documentation/
