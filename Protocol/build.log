@@ -1,0 +1,20 @@
+uav_simulator.c:19:0: warning: ignoring #pragma comment  [-Wunknown-pragmas]
+ #pragma comment(lib, "ws2_32.lib")
+ 
+uav_simulator.c: In function 'main':
+uav_simulator.c:342:5: error: unknown type name 'ul_reassembly_ctx_t'
+     ul_reassembly_ctx_t reasm_ctx;
+     ^~~~~~~~~~~~~~~~~~~
+uav_simulator.c:343:5: warning: implicit declaration of function 'ul_reassembly_init' [-Wimplicit-function-declaration]
+     ul_reassembly_init(&reasm_ctx);
+     ^~~~~~~~~~~~~~~~~~
+uav_simulator.c:344:26: error: 'UL_FRAG_MAX_TOTAL' undeclared (first use in this function)
+     uint8_t reasm_output[UL_FRAG_MAX_TOTAL];
+                          ^~~~~~~~~~~~~~~~~
+uav_simulator.c:344:26: note: each undeclared identifier is reported only once for each function it appears in
+uav_simulator.c:470:48: warning: implicit declaration of function 'ul_reassembly_add' [-Wimplicit-function-declaration]
+                             int reasm_result = ul_reassembly_add(&reasm_ctx, &hdr,
+                                                ^~~~~~~~~~~~~~~~~
+uav_simulator.c:344:13: warning: unused variable 'reasm_output' [-Wunused-variable]
+     uint8_t reasm_output[UL_FRAG_MAX_TOTAL];
+             ^~~~~~~~~~~~

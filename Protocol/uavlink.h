@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /* Protocol Constants */
 #define UL_MAX_PAYLOAD_SIZE 512 /* Maximum payload size in parser buffer */
@@ -279,6 +280,44 @@ typedef struct
     uint16_t loiter_time; // Loiter time at waypoint (seconds)
 } ul_mission_item_t;
 
+/* --- Fragment Reassembly --- */
+#define UL_FRAG_MAX_PAYLOAD   256   // Max payload per fragment
+#define UL_FRAG_MAX_FRAGMENTS  16   // Max fragments per message
+#define UL_FRAG_MAX_TOTAL    4096   // Max reassembled payload (256 * 16)
+#define UL_FRAG_TIMEOUT_MS   5000   // Reassembly timeout
+
+typedef struct {
+    uint8_t  num_fragments;             // Total fragments generated
+    uint8_t  payloads[16][256];         // Fragment payloads
+    uint16_t payload_lens[16];          // Length of each fragment
+    ul_header_t headers[16];            // Pre-filled headers per fragment
+} ul_fragment_set_t;
+
+int ul_fragment_split(const ul_header_t *base_header,
+                      const uint8_t *payload, size_t payload_len,
+                      ul_fragment_set_t *out);
+
+typedef struct {
+    bool     active;                    // Slot in use
+    uint16_t msg_id;                    // Message ID being reassembled
+    uint8_t  sys_id;                    // Source system ID
+    uint8_t  frag_total;               // Expected fragment count
+    bool     received[16];             // Which fragments arrived
+    uint8_t  data[4096];               // Reassembled payload buffer
+    uint16_t frag_lens[16];            // Length of each received fragment
+    uint8_t  frags_received;           // Count of received fragments
+    uint32_t start_time_ms;            // Timeout tracking
+} ul_reassembly_slot_t;
+
+typedef struct {
+    ul_reassembly_slot_t slots[4];     // 4 concurrent reassembly slots
+} ul_reassembly_ctx_t;
+
+void ul_reassembly_init(ul_reassembly_ctx_t *ctx);
+int  ul_reassembly_add(ul_reassembly_ctx_t *ctx, const ul_header_t *hdr,
+                        const uint8_t *payload, uint16_t payload_len,
+                        uint8_t *output, uint16_t *output_len);
+
 /* --- Function Prototypes --- */
 
 /* Initialize a parser */
@@ -342,6 +381,13 @@ int ul_decode_ext_header(const uint8_t *buf, ul_header_t *h);
 
 /* Initialize nonce state. Must be called before first use. */
 void ul_nonce_init(ul_nonce_state_t *state);
+
+/* Get the current 32-bit nonce counter for NVM persistence. */
+uint32_t ul_nonce_get_counter(const ul_nonce_state_t *state);
+
+/* Set the 32-bit nonce counter from NVM storage. 
+   Call this immediately after ul_nonce_init() at system boot. */
+void ul_nonce_set_counter(ul_nonce_state_t *state, uint32_t counter);
 
 /* Generate a secure nonce using hybrid approach (counter + random).
    Combines a 32-bit counter with 32 bits of random data for maximum security.

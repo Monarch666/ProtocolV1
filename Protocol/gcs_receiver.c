@@ -68,6 +68,43 @@ static const char *get_ack_result(uint8_t result)
     }
 }
 
+// --- Nonce Persistence (NVM) Helpers ---
+static void save_nonce_state(const ul_nonce_state_t *state, const char *filename)
+{
+    FILE *f = fopen(filename, "wb");
+    if (f)
+    {
+        uint32_t current_counter = ul_nonce_get_counter(state);
+        fwrite(&current_counter, sizeof(uint32_t), 1, f);
+        fclose(f);
+    }
+}
+
+static void load_nonce_state(ul_nonce_state_t *state, const char *filename)
+{
+    ul_nonce_init(state);
+    FILE *f = fopen(filename, "rb");
+    if (f)
+    {
+        uint32_t saved_counter = 0;
+        if (fread(&saved_counter, sizeof(uint32_t), 1, f) == 1)
+        {
+            // Jump by 10000 to prevent reuse if power was lost before a save
+            saved_counter += 10000;
+            ul_nonce_set_counter(state, saved_counter);
+            printf("NVM: Loaded nonce counter %u from %s (with safety jump)\n", saved_counter, filename);
+        }
+        fclose(f);
+    }
+    else
+    {
+        printf("NVM: No saved nonce found (%s), starting fresh.\n", filename);
+    }
+
+    // Save immediately so the jumped value is committed to disk
+    save_nonce_state(state, filename);
+}
+
 static void print_menu(void)
 {
     printf("\n--- Command Menu ---\n");
@@ -166,12 +203,12 @@ static void send_waypoint(int sock, struct sockaddr_in *dest,
 {
     ul_mission_item_t item = {0};
     item.seq = wp_seq;
-    item.frame = 0; // Global
+    item.frame = 0;   // Global
     item.command = 0; // Navigate
     item.lat = 47670000 + (wp_seq * 1000);
     item.lon = -122320000 + (wp_seq * 1000);
     item.alt = 50000 + (wp_seq * 10000); // 50m + 10m per waypoint
-    item.speed = 500; // 5 m/s
+    item.speed = 500;                    // 5 m/s
 
     uint8_t payload[32];
     int payload_len = ul_serialize_mission_item(&item, payload);
@@ -232,13 +269,13 @@ static void send_mission_fragmented(int sock, struct sockaddr_in *dest,
     {
         ul_mission_item_t wp = {0};
         wp.seq = i;
-        wp.frame = 0; // Global
-        wp.command = 0; // Navigate
-        wp.lat = 47670000 + (i * 5000);      // Spread waypoints 0.0005 deg apart
+        wp.frame = 0;                   // Global
+        wp.command = 0;                 // Navigate
+        wp.lat = 47670000 + (i * 5000); // Spread waypoints 0.0005 deg apart
         wp.lon = -122320000 + (i * 5000);
-        wp.alt = 50000 + (i * 10000);         // 50m, 60m, 70m, 80m, 90m
-        wp.speed = 500;                       // 5 m/s
-        wp.loiter_time = (i == 2) ? 30 : 0;   // Loiter 30s at WP#2
+        wp.alt = 50000 + (i * 10000);       // 50m, 60m, 70m, 80m, 90m
+        wp.speed = 500;                     // 5 m/s
+        wp.loiter_time = (i == 2) ? 30 : 0; // Loiter 30s at WP#2
 
         int len = ul_serialize_mission_item(&wp, big_payload + offset);
         offset += len; // 20 bytes each
@@ -246,23 +283,14 @@ static void send_mission_fragmented(int sock, struct sockaddr_in *dest,
 
     printf("Mission payload: %d bytes (%d waypoints x 20 bytes + 1 header)\n", offset, 5);
 
-    // Fragment the mission payload
-    ul_header_t base_header = {0};
-    base_header.payload_len = offset;
-    base_header.priority = UL_PRIO_HIGH;
-    base_header.stream_type = UL_STREAM_MISSION;
-    base_header.encrypted = true;
-    base_header.sys_id = 255;        // GCS
-    base_header.comp_id = 0;
-    base_header.target_sys_id = 1;   // UAV
-    base_header.msg_id = UL_MSG_MISSION_ITEM;
+    // Fragment the mission payload manually
+    // Use 64 bytes per fragment for demonstration
+    const int FRAGMENT_SIZE = 64;
+    int num_frags = (offset + FRAGMENT_SIZE - 1) / FRAGMENT_SIZE; // Ceiling division
 
-    ul_fragment_set_t frags;
-    int num_frags = ul_fragment_split(&base_header, big_payload, offset, &frags);
-
-    if (num_frags <= 0)
+    if (num_frags > 255)
     {
-        printf("ERROR: Fragment split failed (%d)\n", num_frags);
+        printf("ERROR: Payload too large (%d fragments needed, max 255)\n", num_frags);
         return;
     }
 
@@ -272,14 +300,31 @@ static void send_mission_fragmented(int sock, struct sockaddr_in *dest,
     int total_sent = 0;
     for (int i = 0; i < num_frags; i++)
     {
-        frags.headers[i].sequence = (*seq)++;
+        // Calculate payload slice for this fragment
+        int frag_offset = i * FRAGMENT_SIZE;
+        int frag_len = (i == num_frags - 1) ? (offset - frag_offset) : FRAGMENT_SIZE;
 
-        int sent = send_command_packet(sock, dest, &frags.headers[i],
-                                       frags.payloads[i], pool, nonce_state, crypto_ctx);
+        // Create header for this fragment
+        ul_header_t frag_header = {0};
+        frag_header.payload_len = frag_len;
+        frag_header.priority = UL_PRIO_HIGH;
+        frag_header.stream_type = UL_STREAM_MISSION;
+        frag_header.encrypted = true;
+        frag_header.fragmented = (num_frags > 1); // Set fragmented flag if multiple fragments
+        frag_header.frag_index = i;
+        frag_header.frag_total = num_frags;
+        frag_header.sequence = (*seq)++;
+        frag_header.sys_id = 255; // GCS
+        frag_header.comp_id = 0;
+        frag_header.target_sys_id = 1; // UAV
+        frag_header.msg_id = UL_MSG_MISSION_ITEM;
+
+        int sent = send_command_packet(sock, dest, &frag_header,
+                                       big_payload + frag_offset, pool, nonce_state, crypto_ctx);
         if (sent > 0)
         {
             printf("  Fragment %d/%d: %d payload bytes, %d wire bytes\n",
-                   i + 1, num_frags, frags.payload_lens[i], sent);
+                   i + 1, num_frags, frag_len, sent);
             total_sent += sent;
         }
 
@@ -315,7 +360,7 @@ int main(int argc, char *argv[])
     ul_mempool_init(&pool);
 
     ul_nonce_state_t nonce_state;
-    ul_nonce_init(&nonce_state);
+    load_nonce_state(&nonce_state, "gcs_nonce.dat");
 
     ul_crypto_ctx_t crypto_ctx;
     ul_crypto_ctx_init(&crypto_ctx);
@@ -543,6 +588,9 @@ int main(int argc, char *argv[])
                                hb.system_status,
                                packets_received, acks_received, parse_errors);
                         last_telem_print = packets_received;
+                        
+                        // Periodically save the nonce to NVM to keep the jump safe
+                        save_nonce_state(&nonce_state, "gcs_nonce.dat");
                     }
                     break;
                 }
@@ -606,6 +654,9 @@ int main(int argc, char *argv[])
     close(recv_sock);
     close(cmd_sock);
 #endif
+
+    // Final save on clean exit
+    save_nonce_state(&nonce_state, "gcs_nonce.dat");
 
     return 0;
 }

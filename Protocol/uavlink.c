@@ -589,6 +589,118 @@ int ul_deserialize_mission_item(ul_mission_item_t *item, const uint8_t *in)
     return 20;
 }
 
+/* --- Fragment Reassembly --- */
+int ul_fragment_split(const ul_header_t *base_header,
+                      const uint8_t *payload, size_t payload_len,
+                      ul_fragment_set_t *out)
+{
+    if (!base_header || !payload || !out || payload_len == 0) return 0;
+    
+    int num_frags = (payload_len + UL_FRAG_MAX_PAYLOAD - 1) / UL_FRAG_MAX_PAYLOAD;
+    if (num_frags > UL_FRAG_MAX_FRAGMENTS) return 0;
+    
+    out->num_fragments = num_frags;
+    
+    for (int i = 0; i < num_frags; i++) {
+        out->headers[i] = *base_header;
+        out->headers[i].fragmented = (num_frags > 1);
+        out->headers[i].frag_index = i;
+        out->headers[i].frag_total = num_frags;
+        
+        size_t offset = i * UL_FRAG_MAX_PAYLOAD;
+        size_t len = (i == num_frags - 1) ? (payload_len - offset) : UL_FRAG_MAX_PAYLOAD;
+        
+        out->headers[i].payload_len = len;
+        out->payload_lens[i] = len;
+        
+        for (size_t j = 0; j < len; j++) {
+            out->payloads[i][j] = payload[offset + j];
+        }
+    }
+    
+    return num_frags;
+}
+
+void ul_reassembly_init(ul_reassembly_ctx_t *ctx)
+{
+    if (!ctx) return;
+    for (int i = 0; i < 4; i++) {
+        ctx->slots[i].active = false;
+    }
+}
+
+int ul_reassembly_add(ul_reassembly_ctx_t *ctx, const ul_header_t *hdr,
+                        const uint8_t *payload, uint16_t payload_len,
+                        uint8_t *output, uint16_t *output_len)
+{
+    if (!ctx || !hdr || !payload || !output || !output_len) return -1;
+    if (!hdr->fragmented) return -1;
+    if (hdr->frag_index >= UL_FRAG_MAX_FRAGMENTS) return -1;
+    if (payload_len > UL_FRAG_MAX_PAYLOAD) return -1;
+    
+    int slot_idx = -1;
+    for (int i = 0; i < 4; i++) {
+        if (ctx->slots[i].active && 
+            ctx->slots[i].msg_id == hdr->msg_id && 
+            ctx->slots[i].sys_id == hdr->sys_id) {
+            slot_idx = i;
+            break;
+        }
+    }
+    
+    if (slot_idx == -1) {
+        for (int i = 0; i < 4; i++) {
+            if (!ctx->slots[i].active) {
+                slot_idx = i;
+                break;
+            }
+        }
+    }
+    
+    if (slot_idx == -1) return -1; // No slots available
+    
+    ul_reassembly_slot_t *slot = &ctx->slots[slot_idx];
+    
+    if (!slot->active) {
+        slot->active = true;
+        slot->msg_id = hdr->msg_id;
+        slot->sys_id = hdr->sys_id;
+        slot->frag_total = hdr->frag_total;
+        slot->frags_received = 0;
+        for (int i = 0; i < 16; i++) slot->received[i] = false;
+    }
+    
+    if (!slot->received[hdr->frag_index]) {
+        slot->received[hdr->frag_index] = true;
+        slot->frags_received++;
+        slot->frag_lens[hdr->frag_index] = payload_len;
+        
+        size_t offset = hdr->frag_index * UL_FRAG_MAX_PAYLOAD;
+        for (size_t i = 0; i < payload_len; i++) {
+            if (offset + i < UL_FRAG_MAX_TOTAL) {
+                slot->data[offset + i] = payload[i];
+            }
+        }
+    }
+    
+    if (slot->frags_received == slot->frag_total) {
+        uint16_t total_len = 0;
+        for (int i = 0; i < slot->frag_total; i++) {
+            total_len += slot->frag_lens[i];
+        }
+        
+        for (uint16_t i = 0; i < total_len; i++) {
+            output[i] = slot->data[i];
+        }
+        *output_len = total_len;
+        
+        slot->active = false;
+        return 1;
+    }
+    
+    return 0;
+}
+
 /* --- Nonce Management Implementation --- */
 
 /* Platform-specific secure random number generation */
@@ -640,6 +752,21 @@ void ul_nonce_init(ul_nonce_state_t *state)
     /* Initialize counter with random value for extra security */
     state->counter = ul_get_random_u32();
     state->initialized = 1;
+}
+
+uint32_t ul_nonce_get_counter(const ul_nonce_state_t *state)
+{
+    if (!state || !state->initialized)
+        return 0;
+    return state->counter;
+}
+
+void ul_nonce_set_counter(ul_nonce_state_t *state, uint32_t counter)
+{
+    if (!state)
+        return;
+    state->counter = counter;
+    state->initialized = 1; // Mark as initialized since counter is explicitly set
 }
 
 void ul_nonce_generate(ul_nonce_state_t *state, uint8_t nonce[8])

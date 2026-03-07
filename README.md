@@ -913,6 +913,7 @@ typedef enum {
 - ✅ No NULL dereferences (comprehensive validation)
 - ✅ No NEON counter reuse (RFC 8439 compliant)
 - ✅ No residual data in memory pool (zeroed on free)
+- ✅ No nonce reuse after reboot (NVM persistence mechanism added)
 
 ### ⚠️ Production Recommendations
 
@@ -923,9 +924,9 @@ typedef enum {
    - Use different keys per vehicle-GCS pair
 
 2. **Nonce State Persistence:**
-   - For production, consider persisting counter to non-volatile memory
-   - Prevents counter reuse after reboot
-   - Alternative: Initialize with timestamp + random on boot
+   - ✅ **Implemented** — The 32-bit nonce counter is safely persisted to non-volatile memory (NVM).
+   - Core API provides `ul_nonce_get_counter()` and `ul_nonce_set_counter()`.
+   - Simulators demonstrate NVM logic over regular OS files with a `+10,000` jump applied immediately upon boot to unconditionally cover potentially unsaved packets during catastrophic power loss.
 
 3. **Replay Protection:**
    - ✅ **Implemented** — 32-packet sliding window bitmap is built into `ul_parser_t`
@@ -1037,7 +1038,9 @@ All issues resolved with production code fixes validated by the test suite.
 
 ### Fragmentation Behavior
 
-**Note:** The current implementation encodes and decodes fragmentation metadata (frag_index, frag_total) but does **not** reassemble fragments. Each fragment is parsed as an independent packet. Applications requiring reassembly must implement it at a higher layer.
+**Note:** The protocol includes full fragment reassembly logic built directly into the core.
+- `ul_fragment_split()`: Safely splits large payloads (up to `UL_FRAG_MAX_TOTAL`) into chunked packets.
+- `ul_reassembly_add()`: Automatically merges chunks over `ul_reassembly_ctx_t` with built-in multi-message concurrency using slots.
 
 ---
 
@@ -1235,11 +1238,11 @@ On ARM Cortex-M4 @168MHz:
 - [x] ~~Batch message support~~ - **COMPLETED (`uavlink_pack_batch` + `ul_deserialize_batch`)**
 - [x] ~~Security hardening (code review cycle 2)~~ - **COMPLETED (7 bugs + 3 security issues fixed)**
 - [x] ~~Bidirectional commands and ACKs~~ - **COMPLETED v1.2 (6 commands + state validation)**
-- [ ] Fragment split/reassembly APIs (`ul_fragment_split`, `ul_reassembly_add`)
+- [x] Fragment split/reassembly APIs (`ul_fragment_split`, `ul_reassembly_add`)
 - [ ] Wireshark dissector for protocol analysis
 - [ ] Performance benchmarks on various platforms
 - [ ] Additional message types (IMU, Barometer, etc.)
-- [ ] Nonce counter persistence across reboots (NVM storage)
+- [x] Nonce counter persistence across reboots (NVM storage)
 
 ---
 

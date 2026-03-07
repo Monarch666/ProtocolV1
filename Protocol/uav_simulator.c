@@ -44,6 +44,43 @@ static const char *get_mode_name(uint8_t mode)
     return "UNKNOWN";
 }
 
+// --- Nonce Persistence (NVM) Helpers ---
+static void save_nonce_state(const ul_nonce_state_t *state, const char *filename)
+{
+    FILE *f = fopen(filename, "wb");
+    if (f)
+    {
+        uint32_t current_counter = ul_nonce_get_counter(state);
+        fwrite(&current_counter, sizeof(uint32_t), 1, f);
+        fclose(f);
+    }
+}
+
+static void load_nonce_state(ul_nonce_state_t *state, const char *filename)
+{
+    ul_nonce_init(state);
+    FILE *f = fopen(filename, "rb");
+    if (f)
+    {
+        uint32_t saved_counter = 0;
+        if (fread(&saved_counter, sizeof(uint32_t), 1, f) == 1)
+        {
+            // Jump by 10000 to prevent reuse if power was lost before a save
+            saved_counter += 10000;
+            ul_nonce_set_counter(state, saved_counter);
+            printf("NVM: Loaded nonce counter %u from %s (with safety jump)\n", saved_counter, filename);
+        }
+        fclose(f);
+    }
+    else
+    {
+        printf("NVM: No saved nonce found (%s), starting fresh.\n", filename);
+    }
+
+    // Save immediately so the jumped value is committed to disk
+    save_nonce_state(state, filename);
+}
+
 // UAV State
 typedef struct
 {
@@ -216,7 +253,7 @@ int main(int argc, char *argv[])
     ul_mempool_init(&pool);
 
     ul_nonce_state_t nonce_state;
-    ul_nonce_init(&nonce_state);
+    load_nonce_state(&nonce_state, "uav_nonce.dat");
 
     ul_crypto_ctx_t crypto_ctx;
     ul_crypto_ctx_init(&crypto_ctx);
@@ -645,6 +682,9 @@ int main(int argc, char *argv[])
                    get_mode_name(state.flight_mode),
                    packets_sent, commands_received,
                    state.voltage / 1000.0f);
+            
+            // Periodically save the nonce to NVM to keep the jump safe
+            save_nonce_state(&nonce_state, "uav_nonce.dat");
         }
 
 // 100ms loop (10 Hz)
@@ -664,6 +704,9 @@ int main(int argc, char *argv[])
     close(telem_sock);
     close(cmd_sock);
 #endif
+
+    // Final save on clean exit
+    save_nonce_state(&nonce_state, "uav_nonce.dat");
 
     return 0;
 }
