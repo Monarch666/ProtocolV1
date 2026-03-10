@@ -1,27 +1,4 @@
-# Build artifacts
-*.o
-*.a
-*.so
-*.dll
-*.dylib
-*.exe
-
-# Compiled binaries
-uav_simulator
-gcs_receiver
-uavlink_benchmark
-key_example
-test_*
-
-# Key files (NEVER commit keys!)
-*.key
-*_key.bin
-*_key.hex
-uavlink_key.*
-test_key.*
-benchmark_key.*
-
-# Test output
+Documentation/
 *.dat
 *.err
 *.in
