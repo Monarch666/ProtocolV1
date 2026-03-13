@@ -938,6 +938,8 @@ int uavlink_pack(uint8_t *buf, const ul_header_t *h, const uint8_t *payload, con
            - Encrypts payload and generates MAC over both header (AAD) and ciphertext
            - MAC protects against both ciphertext and header manipulation */
 
+
+
         crypto_aead_lock(buf + header_len,  /* Output: ciphertext */
                          mac,               /* Output: MAC tag */
                          key_32b,           /* 256-bit key */
@@ -1231,7 +1233,7 @@ ul_encrypt_policy_t ul_get_encrypt_policy(uint16_t msg_id)
     case UL_MSG_HEARTBEAT:
         return UL_ENCRYPT_NEVER;
     case UL_MSG_ATTITUDE:
-        return UL_ENCRYPT_NEVER;
+        return UL_ENCRYPT_OPTIONAL;
     case UL_MSG_GPS_RAW:
         return UL_ENCRYPT_OPTIONAL;
     case UL_MSG_BATTERY:

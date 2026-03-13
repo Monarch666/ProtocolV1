@@ -2,6 +2,7 @@
 *.err
 *.in
 *.out
+*.exe
 
 # LaTeX build files
 *.aux
@@ -42,3 +43,24 @@ Documentation/*.aux
 Documentation/*.log
 Documentation/*.toc
 Documentation/*.out
+
+# Do not publish docs/testing content
+Protocol/testing/
+Protocol/.gitignore
+
+# Keep a single README in repo root
+*.md
+!README.md
+
+# Local automation and transient helpers
+*.ps1
+
+# Auxiliary generated keys and local identity material
+Protocol/*_id_seed.bin
+Protocol/*_pub.bin
+Protocol/example_key.bin
+Protocol/example_key_generated.bin
+Protocol/example_key.txt
+Protocol/test_key.bin
+
+MANUAL_TESTING_GUIDE.md

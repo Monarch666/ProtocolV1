@@ -1,9 +1,9 @@
 /*
  * UAVLink Bidirectional UAV Simulator
  *
- * Sends telemetry on UDP port 14550 (UAV -> GCS)
- * Receives commands on UDP port 14551 (GCS -> UAV)
- * Sends command ACKs on UDP port 14550 (UAV -> GCS)
+ * Sends telemetry on UDP port 14552 (UAV -> GCS)
+ * Receives commands on UDP port 14553 (GCS -> UAV)
+ * Sends command ACKs on UDP port 14552 (UAV -> GCS)
  */
 
 #include "uavlink.h"
@@ -328,7 +328,7 @@ int main(int argc, char *argv[])
     struct sockaddr_in gcs_telem_addr;
     memset(&gcs_telem_addr, 0, sizeof(gcs_telem_addr));
     gcs_telem_addr.sin_family = AF_INET;
-    gcs_telem_addr.sin_port = htons(14550);
+    gcs_telem_addr.sin_port = htons(14552);
     gcs_telem_addr.sin_addr.s_addr = inet_addr(gcs_ip);
 
     // Socket for receiving commands (GCS -> UAV on port 14551)
@@ -360,8 +360,8 @@ int main(int argc, char *argv[])
     fcntl(cmd_sock, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    printf("Telemetry -> %s:14550 (Proxy target)\n", gcs_ip);
-    printf("Commands  <- 0.0.0.0:14553 (From proxy)\n");
+    printf("Telemetry -> %s:14552 (direct GCS connection)\n", gcs_ip);
+    printf("Commands  <- 0.0.0.0:14553 (direct GCS connection)\n");
     printf("Status: DISARMED | Mode: MANUAL\n");
     printf("Waiting for commands...\n\n");
 
@@ -453,11 +453,11 @@ int main(int argc, char *argv[])
                         uint8_t nonce24[24] = {0};
                         memcpy(nonce24, cmd_parser.cipher_nonce, 8);
 
-                        // Determine header length for AAD
+                        // Determine header length for AAD (includes entire header from SOF)
                         uint8_t stream_type = ((cmd_parser.header_buf[1] & 0x3) << 2) |
                                               ((cmd_parser.header_buf[2] >> 6) & 0x3);
                         bool is_cmd = (stream_type == UL_STREAM_CMD || stream_type == UL_STREAM_CMD_ACK);
-                        size_t header_len = (is_cmd ? 9 : 8) + 8; // routing + nonce
+                        size_t header_len = 4 + (is_cmd ? 5 : 4) + (cmd_parser.header_buf[3] & UL_FLAG_ENCRYPTED ? 8 : 0);
 
                         // Need monocypher for decryption
                         extern int crypto_aead_unlock(
@@ -507,36 +507,65 @@ int main(int argc, char *argv[])
                             break;
                         }
 
-                        // If we're in SENT_KEY or later and receive their key, establish immediately
-                        // This means our key reached them and they're sending theirs back
-                        if (ecdh_state >= UL_ECDH_SENT_KEY)
+                        // Always send our KEY_EXCHANGE when we receive peer's KEY_EXCHANGE
+                        // This handles crossed-in-flight KEY_EXCHANGE packets and ensures both sides get the key
+                        uint8_t raw_shared[32];
+                        crypto_x25519(raw_shared, private_key, rx_kx.public_key);
+                        crypto_blake2b(session_key, 32, raw_shared, 32);
+
+                        printf("[DEBUG] UAV session_key[0-7]=%02X %02X %02X %02X %02X %02X %02X %02X\n",
+                               session_key[0], session_key[1], session_key[2], session_key[3],
+                               session_key[4], session_key[5], session_key[6], session_key[7]);
+                        fflush(stdout);
+
+                        ecdh_peer_seq = rx_kx.seq_num;
+
+                        printf("  >>> ECDH: Received GCS key (seq=%u), sending UAV key\n", rx_kx.seq_num);
+
+                        // Send our KEY_EXCHANGE immediately
+                        ul_key_exchange_t kx_reply = {0};
+                        memcpy(kx_reply.public_key, public_key, 32);
+                        kx_reply.seq_num = ecdh_seq_num;
+
+                        // Re-use data_to_sign for signing our key
+                        memcpy(data_to_sign, public_key, 32);
+                        data_to_sign[32] = ecdh_seq_num;
+                        crypto_eddsa_sign(kx_reply.signature, uav_id_secret, data_to_sign, 33);
+
+                        uint8_t kx_payload[97];
+                        int kx_payload_len = ul_serialize_key_exchange(&kx_reply, kx_payload);
+
+                        ul_header_t kx_hdr = {0};
+                        kx_hdr.payload_len = kx_payload_len;
+                        kx_hdr.priority = UL_PRIO_HIGH;
+                        kx_hdr.stream_type = UL_STREAM_CMD;
+                        kx_hdr.encrypted = false;
+                        kx_hdr.sequence = state.sequence++;
+                        kx_hdr.sys_id = 1;
+                        kx_hdr.comp_id = 1;
+                        kx_hdr.target_sys_id = 255;
+                        kx_hdr.msg_id = UL_MSG_KEY_EXCHANGE;
+
+                        uint8_t *kx_buf = NULL;
+                        int kx_pkt_len = ul_pack_fast(&pool, &kx_hdr, kx_payload, session_key,
+                                                      &nonce_state, &crypto_ctx, &kx_buf);
+                        if (kx_pkt_len > 0 && kx_buf)
                         {
-                            // Compute shared secret
-                            uint8_t raw_shared[32];
-                            crypto_x25519(raw_shared, private_key, rx_kx.public_key);
-                            crypto_blake2b(session_key, 32, raw_shared, 32);
-
-                            ecdh_peer_seq = rx_kx.seq_num;
-                            ecdh_state = UL_ECDH_ESTABLISHED; // Both sides have keys now!
-                            ecdh_retry_count = 0;             // Reset retry counter
-
-                            printf("  >>> ECDH: Session ESTABLISHED! Received GCS key seq=%u\n", rx_kx.seq_num);
-                            printf("[UAVLink] Unicorn, Alpha, Victor. Link is hot.\n");
-                        }
-                        else
-                        {
-                            // We haven't sent our key yet, compute shared secret and send our key
-                            uint8_t raw_shared[32];
-                            crypto_x25519(raw_shared, private_key, rx_kx.public_key);
-                            crypto_blake2b(session_key, 32, raw_shared, 32);
-
-                            ecdh_peer_seq = rx_kx.seq_num;
-                            ecdh_state = UL_ECDH_RECEIVED_KEY;
-
-                            printf("  >>> ECDH: Received GCS key (seq=%u)\n", rx_kx.seq_num);
+                            sendto(telem_sock, (char *)kx_buf, kx_pkt_len, 0,
+                                   (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
+                            ul_mempool_free(&pool, kx_buf);
                         }
 
-                        // Always send ACK when we receive KEY_EXCHANGE
+                        // Mark ESTABLISHED immediately - we have both keys now
+                        ecdh_state = UL_ECDH_ESTABLISHED;
+                        ecdh_retry_count = 0;
+                        ecdh_last_send_time = get_time_ms();
+
+                        printf("  >>> ECDH: Session ESTABLISHED! (received GCS key, sent UAV key)\n");
+                        printf("[UAVLink] Unicorn, Alpha, Victor. Link is hot.\n");
+                        fflush(stdout);
+
+                        // Send ACK when we receive KEY_EXCHANGE
                         ul_key_exchange_ack_t kx_ack = {0};
                         kx_ack.seq_num = rx_kx.seq_num;
                         kx_ack.status = 0; // OK
@@ -572,10 +601,32 @@ int main(int argc, char *argv[])
                         ul_deserialize_key_exchange_ack(&rx_ack, parse_buf);
 
                         // Check if this ACK is for our current handshake
-                        if (rx_ack.seq_num == ecdh_seq_num && ecdh_state == UL_ECDH_SENT_KEY)
+                        // Mark as ESTABLISHED if we have session_key computed
+                        if (rx_ack.seq_num == ecdh_seq_num && ecdh_state >= UL_ECDH_SENT_KEY && ecdh_state != UL_ECDH_ESTABLISHED)
                         {
-                            ecdh_state = UL_ECDH_ESTABLISHED;
-                            printf("  >>> ECDH: Session ESTABLISHED! (seq=%u confirmed)\n", ecdh_seq_num);
+                            // Check if session_key is valid (not all zeros)
+                            bool has_key = false;
+                            for (int i = 0; i < 32; i++) {
+                                if (session_key[i] != 0) {
+                                    has_key = true;
+                                    break;
+                                }
+                            }
+
+                            if (has_key) {
+                                // We have session_key, mark ESTABLISHED
+                                ecdh_state = UL_ECDH_ESTABLISHED;
+                                ecdh_retry_count = 0;
+                                printf("  >>> ECDH: Received ACK for seq=%u, session ESTABLISHED!\n", ecdh_seq_num);
+                                printf("[UAVLink] Unicorn, Alpha, Victor. Link is hot.\n");
+                                fflush(stdout);
+                            } else {
+                                printf("  >>> ECDH: Received ACK for seq=%u (waiting for GCS KEY_EXCHANGE)\n", ecdh_seq_num);
+                            }
+                        }
+                        else if (rx_ack.seq_num == ecdh_seq_num && ecdh_state == UL_ECDH_ESTABLISHED)
+                        {
+                            printf("  (ACK for seq=%u received, session already established)\n", ecdh_seq_num);
                         }
                         else
                         {
@@ -588,6 +639,21 @@ int main(int argc, char *argv[])
                     {
                         if (ecdh_state != UL_ECDH_ESTABLISHED)
                             break;
+
+                        ul_command_t cmd;
+                        ul_deserialize_command(&cmd, parse_buf);
+                        printf("Command received: 0x%04X param1=%u\n", cmd.command_id, cmd.param1);
+
+                        ul_command_ack_t ack = process_command(&state, &cmd);
+                        send_ack(telem_sock, &gcs_telem_addr, &ack, &state,
+                                 &pool, &nonce_state, &crypto_ctx);
+                        break;
+                    }
+                    case UL_MSG_MODE_CHANGE:
+                    {
+                        if (ecdh_state != UL_ECDH_ESTABLISHED)
+                            break;
+
                         ul_mode_change_t mode;
                         ul_deserialize_mode_change(&mode, parse_buf);
                         printf("Mode change -> %s (0x%02X)\n",
@@ -595,7 +661,6 @@ int main(int argc, char *argv[])
 
                         state.flight_mode = mode.mode;
 
-                        // Send ACK
                         ul_command_ack_t ack = {0};
                         ack.command_id = UL_MSG_MODE_CHANGE;
                         ack.result = UL_ACK_OK;
@@ -811,7 +876,6 @@ int main(int argc, char *argv[])
             header.payload_len = payload_len;
             header.priority = UL_PRIO_NORMAL;
             header.stream_type = UL_STREAM_HEARTBEAT;
-            header.encrypted = true;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
@@ -844,7 +908,6 @@ int main(int argc, char *argv[])
             header.payload_len = payload_len;
             header.priority = UL_PRIO_HIGH;
             header.stream_type = UL_STREAM_TELEM_FAST;
-            header.encrypted = true;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
@@ -880,7 +943,6 @@ int main(int argc, char *argv[])
             header.payload_len = payload_len;
             header.priority = UL_PRIO_NORMAL;
             header.stream_type = UL_STREAM_TELEM_SLOW;
-            header.encrypted = true;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
