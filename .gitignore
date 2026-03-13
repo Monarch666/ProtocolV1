@@ -46,6 +46,7 @@ Documentation/*.out
 
 # Do not publish docs/testing content
 Protocol/testing/
+Protocol/wireshark/
 Protocol/.gitignore
 
 # Keep a single README in repo root
@@ -64,3 +65,4 @@ Protocol/example_key.txt
 Protocol/test_key.bin
 
 MANUAL_TESTING_GUIDE.md
+
