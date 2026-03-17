@@ -263,15 +263,30 @@ int main(int argc, char *argv[])
     printf("=== UAVLink Bidirectional UAV Simulator ===\n\n");
     printf("[UAVLink] Hello, friend.\n\n");
 
-    // Determine GCS IP
+    // Determine GCS IP and Ports
     const char *gcs_ip = "127.0.0.1";
-    if (argc >= 2)
+    uint16_t send_port = 14552;
+    uint16_t listen_port = 14553;
+
+    for (int i = 1; i < argc; i++)
     {
-        gcs_ip = argv[1];
+        if (strcmp(argv[i], "--send-port") == 0 && i + 1 < argc)
+        {
+            send_port = (uint16_t)atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--listen-port") == 0 && i + 1 < argc)
+        {
+            listen_port = (uint16_t)atoi(argv[++i]);
+        }
+        else if (argv[i][0] != '-')
+        {
+            gcs_ip = argv[i];
+        }
     }
-    else
+
+    if (argc < 2)
     {
-        printf("Usage: %s <gcs_ip>\n", argv[0]);
+        printf("Usage: %s <gcs_ip> [--send-port <port>] [--listen-port <port>]\n", argv[0]);
         printf("No IP provided, defaulting to 127.0.0.1\n\n");
     }
 
@@ -329,7 +344,7 @@ int main(int argc, char *argv[])
     struct sockaddr_in gcs_telem_addr;
     memset(&gcs_telem_addr, 0, sizeof(gcs_telem_addr));
     gcs_telem_addr.sin_family = AF_INET;
-    gcs_telem_addr.sin_port = htons(14552);
+    gcs_telem_addr.sin_port = htons(send_port);
     gcs_telem_addr.sin_addr.s_addr = inet_addr(gcs_ip);
 
     // Socket for receiving commands (GCS -> UAV on port 14551)
@@ -343,12 +358,12 @@ int main(int argc, char *argv[])
     struct sockaddr_in cmd_bind_addr;
     memset(&cmd_bind_addr, 0, sizeof(cmd_bind_addr));
     cmd_bind_addr.sin_family = AF_INET;
-    cmd_bind_addr.sin_port = htons(14553);
+    cmd_bind_addr.sin_port = htons(listen_port);
     cmd_bind_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(cmd_sock, (struct sockaddr *)&cmd_bind_addr, sizeof(cmd_bind_addr)) < 0)
     {
-        printf("ERROR: Failed to bind command socket to port 14553\n");
+        printf("ERROR: Failed to bind command socket to port %u\n", listen_port);
         return 1;
     }
 
@@ -361,8 +376,8 @@ int main(int argc, char *argv[])
     fcntl(cmd_sock, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    printf("Telemetry -> %s:14552 (direct GCS connection)\n", gcs_ip);
-    printf("Commands  <- 0.0.0.0:14553 (direct GCS connection)\n");
+    printf("Telemetry -> %s:%u (direct GCS connection)\n", gcs_ip, send_port);
+    printf("Commands  <- 0.0.0.0:%u (direct GCS connection)\n", listen_port);
     printf("Status: DISARMED | Mode: MANUAL\n");
     printf("Waiting for commands...\n\n");
 

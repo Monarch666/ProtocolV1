@@ -422,12 +422,26 @@ int main(int argc, char *argv[])
     // Determine UAV IP and startup mode
     const char *uav_ip = "127.0.0.1";
     bool auto_soak = false;
+    uint16_t send_port = 14553;
+    uint16_t listen_port = 14552;
 
     for (int i = 1; i < argc; i++)
     {
         if (strcmp(argv[i], "--auto-soak") == 0)
         {
             auto_soak = true;
+            continue;
+        }
+
+        if (strcmp(argv[i], "--send-port") == 0 && i + 1 < argc)
+        {
+            send_port = (uint16_t)atoi(argv[++i]);
+            continue;
+        }
+
+        if (strcmp(argv[i], "--listen-port") == 0 && i + 1 < argc)
+        {
+            listen_port = (uint16_t)atoi(argv[++i]);
             continue;
         }
 
@@ -439,7 +453,7 @@ int main(int argc, char *argv[])
 
     if (argc < 2)
     {
-        printf("Usage: %s <uav_ip>\n", argv[0]);
+        printf("Usage: %s <uav_ip> [--auto-soak] [--send-port <port>] [--listen-port <port>]\n", argv[0]);
         printf("No IP provided, defaulting to 127.0.0.1\n\n");
     }
 
@@ -504,12 +518,12 @@ int main(int argc, char *argv[])
     struct sockaddr_in recv_addr;
     memset(&recv_addr, 0, sizeof(recv_addr));
     recv_addr.sin_family = AF_INET;
-    recv_addr.sin_port = htons(14552);
+    recv_addr.sin_port = htons(listen_port);
     recv_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(recv_sock, (struct sockaddr *)&recv_addr, sizeof(recv_addr)) < 0)
     {
-        printf("ERROR: Failed to bind to port 14552\n");
+        printf("ERROR: Failed to bind to port %u\n", listen_port);
         return 1;
     }
 
@@ -533,11 +547,11 @@ int main(int argc, char *argv[])
     struct sockaddr_in uav_cmd_addr;
     memset(&uav_cmd_addr, 0, sizeof(uav_cmd_addr));
     uav_cmd_addr.sin_family = AF_INET;
-    uav_cmd_addr.sin_port = htons(14553);
+    uav_cmd_addr.sin_port = htons(send_port);
     uav_cmd_addr.sin_addr.s_addr = inet_addr(uav_ip);
 
-    printf("Listening on UDP port 14552 (telemetry + ACKs)\n");
-    printf("Sending commands to %s:14553 (direct UAV connection)\n", uav_ip);
+    printf("Listening on UDP port %u (telemetry + ACKs)\n", listen_port);
+    printf("Sending commands to %s:%u (direct UAV connection)\n", uav_ip, send_port);
     print_menu();
 
     // Generate ECDH Keys
