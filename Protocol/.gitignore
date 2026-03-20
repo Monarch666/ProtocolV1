@@ -1,0 +1,23 @@
+# Build artifacts
+bin/
+*.o
+*.obj
+
+# Identity Keys (Binary seeds and signatures)
+keys/*.bin
+keys/*.dat
+keys/*.txt
+
+# Logs
+testing/logs/
+*.log
+
+# IDE files
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+
+# Temporary files
+_vm_keygen_tmp/

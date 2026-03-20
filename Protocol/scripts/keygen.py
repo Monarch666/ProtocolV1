@@ -50,7 +50,10 @@ def format_python(key, name="ENCRYPTION_KEY"):
 def save_to_file(key, filename):
     """Save key to binary file with secure permissions."""
     try:
-        # Write binary key
+        # Ensure keys/ directory exists if saving there
+        if not os.path.dirname(filename) and os.path.isdir('keys'):
+            filename = os.path.join('keys', filename)
+            
         with open(filename, 'wb') as f:
             f.write(key)
         
@@ -139,7 +142,7 @@ Security Notes:
             print(f"\nHex: {format_hex(key)}")
             print(f"\nTo load in C code:")
             print('    uint8_t key[32];')
-            print(f'    FILE *f = fopen("key.bin", "rb");')
+            print(f'    FILE *f = fopen("keys/key.bin", "rb");')
             print('    fread(key, 1, 32, f);')
             print('    fclose(f);')
     

@@ -1,8 +1,15 @@
 CC = gcc
-CFLAGS = -Wall -O2
+CFLAGS = -Wall -O2 -Isrc/core
 
-# Source files
-CORE_SRC = uavlink.c uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c uavlink_keymanager.c
+# Directories
+SRC_CORE = src/core
+SRC_APPS = src/apps
+SRC_TOOLS = src/tools
+BIN_DIR = bin
+
+# Core Protocol Files
+CORE_SRC = $(SRC_CORE)/uavlink.c $(SRC_CORE)/uavlink_fast.c $(SRC_CORE)/uavlink_compress.c \
+           $(SRC_CORE)/uavlink_hw_crypto.c $(SRC_CORE)/monocypher.c $(SRC_CORE)/uavlink_keymanager.c
 
 # Platform-specific flags
 ifeq ($(OS),Windows_NT)
@@ -15,19 +22,19 @@ endif
 
 all: benchmark receiver simulator key_example
 
-benchmark: uavlink_benchmark.c $(CORE_SRC)
-	$(CC) $(CFLAGS) -o uavlink_benchmark$(EXT) uavlink_benchmark.c $(CORE_SRC) $(LDFLAGS)
+benchmark: $(SRC_TOOLS)/uavlink_benchmark.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/uavlink_benchmark$(EXT) $(SRC_TOOLS)/uavlink_benchmark.c $(CORE_SRC) $(LDFLAGS)
 
-receiver: gcs_receiver.c $(CORE_SRC)
-	$(CC) $(CFLAGS) -o gcs_receiver$(EXT) gcs_receiver.c $(CORE_SRC) $(LDFLAGS)
+receiver: $(SRC_APPS)/gcs_receiver.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/gcs_receiver$(EXT) $(SRC_APPS)/gcs_receiver.c $(CORE_SRC) $(LDFLAGS)
 
-simulator: uav_simulator.c $(CORE_SRC)
-	$(CC) $(CFLAGS) -o uav_simulator$(EXT) uav_simulator.c $(CORE_SRC) $(LDFLAGS)
+simulator: $(SRC_APPS)/uav_simulator.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/uav_simulator$(EXT) $(SRC_APPS)/uav_simulator.c $(CORE_SRC) $(LDFLAGS)
 
-key_example: key_example.c $(CORE_SRC)
-	$(CC) $(CFLAGS) -o key_example$(EXT) key_example.c $(CORE_SRC) $(LDFLAGS)
+key_example: $(SRC_TOOLS)/key_example.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/key_example$(EXT) $(SRC_TOOLS)/key_example.c $(CORE_SRC) $(LDFLAGS)
 
 clean:
-	rm -f *.o *.exe uavlink_benchmark gcs_receiver uav_simulator key_example
+	rm -f bin/* src/core/*.o src/apps/*.o src/tools/*.o
 
 .PHONY: all benchmark receiver simulator key_example clean

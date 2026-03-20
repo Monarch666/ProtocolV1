@@ -95,15 +95,15 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 
 #### Phase 2 Optimizations
 
-| File                    | Description                              |
-| ----------------------- | ---------------------------------------- |
+| File                      | Description                              |
+| ------------------------- | ---------------------------------------- |
 | `Protocol/uavlink_fast.h` | Zero-copy parser, memory pool APIs       |
 | `Protocol/uavlink_fast.c` | Performance optimization implementations |
 
 #### Phase 3 Advanced Features
 
-| File                        | Description                         |
-| --------------------------- | ----------------------------------- |
+| File                          | Description                         |
+| ----------------------------- | ----------------------------------- |
 | `Protocol/uavlink_compress.h` | Delta encoding, LZ4, FEC APIs       |
 | `Protocol/uavlink_compress.c` | Compression and FEC implementations |
 
@@ -116,11 +116,11 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 
 #### Testing & Examples
 
-| File                                      | Description                                      |
-| ----------------------------------------- | ------------------------------------------------ |
-| `Protocol/uavlink_benchmark.c`            | Performance profiler (1000 iterations)           |
-| `Protocol/gcs_receiver.c`                 | Network receiver demo with Phase 2 optimizations |
-| `Protocol/uav_simulator.c`                | Network transmitter demo (supports CLI IP arg)   |
+| File                           | Description                                      |
+| ------------------------------ | ------------------------------------------------ |
+| `Protocol/uavlink_benchmark.c` | Performance profiler (1000 iterations)           |
+| `Protocol/gcs_receiver.c`      | Network receiver demo with Phase 2 optimizations |
+| `Protocol/uav_simulator.c`     | Network transmitter demo (supports CLI IP arg)   |
 
 ### Compiling and Testing
 

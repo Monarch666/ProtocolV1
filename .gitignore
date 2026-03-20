@@ -1,70 +1,55 @@
+# === GLOBAL EXCLUSIONS ===
+*.exe
 *.dat
+*.bin
+*.o
+*.obj
+*.log
 *.err
 *.in
 *.out
-*.exe
+*.tmp
+*.bak
+*.ps1
+*.sh
 
-# LaTeX build files
-*.aux
-*.log
-*.toc
-*.out
+# === DOCUMENTATION (INTERNAL USE ONLY - DO NOT UPLOAD) ===
+Documentation/
+*.tex
 *.pdf
+*.aux
+*.toc
 *.fls
 *.fdb_latexmk
 *.synctex.gz
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+# === MARKDOWN (Only README.md allowed) ===
+*.md
+!README.md
 
-# Editor/IDE files
+# === BINARY OUTPUTS ===
+uavlink_benchmark
+gcs_receiver
+uav_simulator
+uavlink_test
+example
+example_messages
+test_uavlink
+
+# === OS & IDE ===
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
-Thumbs.db
+__pycache__/
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.orig
-
-# Documentation (keeping source, ignoring builds)
-Documentation/
-Documentation/*.pdf
-Documentation/*.aux
-Documentation/*.log
-Documentation/*.toc
-Documentation/*.out
-
-# Do not publish docs/testing content
+# === PROJECT SUBDIRECTORIES (PRIVACY/CLEANLINESS) ===
+Protocol/bin/
+Protocol/keys/
 Protocol/testing/
+Protocol/_vm_keygen_tmp/
 Protocol/wireshark/
-Protocol/.gitignore
-
-# Keep a single README in repo root
-*.md
-!README.md
-
-# Local automation and transient helpers
-*.ps1
-
-# Auxiliary generated keys and local identity material
-Protocol/*_id_seed.bin
-Protocol/*_pub.bin
-Protocol/example_key.bin
-Protocol/example_key_generated.bin
-Protocol/example_key.txt
-Protocol/test_key.bin
-
-MANUAL_TESTING_GUIDE.md
-SETUP_COMPLETED.md
-TRANSFER_CHECKLIST.md
-
+Protocol/testing/logs/

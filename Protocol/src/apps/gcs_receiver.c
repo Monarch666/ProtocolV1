@@ -492,7 +492,7 @@ int main(int argc, char *argv[])
     }
 
     // Load Identity Keys
-    FILE *f_gcs_seed = fopen("gcs_id_seed.bin", "rb");
+    FILE *f_gcs_seed = fopen("keys/gcs_id_seed.bin", "rb");
     if (!f_gcs_seed || fread(gcs_id_seed, 1, 32, f_gcs_seed) != 32)
     {
         printf("ERROR: Could not load gcs_id_seed.bin (generate with keygen.py)\n");
@@ -500,7 +500,7 @@ int main(int argc, char *argv[])
     }
     if (f_gcs_seed) fclose(f_gcs_seed);
 
-    FILE *f_uav_pub = fopen("uav_pub.bin", "rb");
+    FILE *f_uav_pub = fopen("keys/uav_pub.bin", "rb");
     if (!f_uav_pub || fread(uav_id_public, 1, 32, f_uav_pub) != 32)
     {
         printf("ERROR: Could not load uav_pub.bin (generate with id_gen.exe)\n");
@@ -516,7 +516,7 @@ int main(int argc, char *argv[])
     ul_mempool_init(&pool);
 
     ul_nonce_state_t nonce_state;
-    load_nonce_state(&nonce_state, "gcs_nonce.dat");
+    load_nonce_state(&nonce_state, "keys/gcs_nonce.dat");
 
     ul_crypto_ctx_t crypto_ctx;
     ul_crypto_ctx_init(&crypto_ctx);
