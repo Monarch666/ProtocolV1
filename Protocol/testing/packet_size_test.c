@@ -133,7 +133,7 @@ static int test_fragmented(uint16_t *seq, const uint8_t *payload, size_t payload
         }
 
         int reasm_res = ul_reassembly_add(&reasm_ctx, &rx_hdr, rx_payload,
-                                          rx_hdr.payload_len, reasm_output, &reasm_output_len);
+                                          rx_hdr.payload_len, reasm_output, &reasm_output_len, sizeof(reasm_output));
         if (reasm_res < 0)
         {
             return -2004;
