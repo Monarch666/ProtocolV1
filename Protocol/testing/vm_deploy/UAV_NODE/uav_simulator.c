@@ -1,13 +1,13 @@
 /*
- * UAVLink Bidirectional UAV Simulator
+ * Kestrel Bidirectional UAV Simulator
  *
  * Sends telemetry on UDP port 14552 (UAV -> GCS)
  * Receives commands on UDP port 14553 (GCS -> UAV)
  * Sends command ACKs on UDP port 14552 (UAV -> GCS)
  */
 
-#include "uavlink.h"
-#include "uavlink_fast.h"
+#include "kestrel.h"
+#include "kestrel_fast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +51,7 @@ static uint8_t uav_id_secret[64] = {0};
 static uint8_t uav_id_public[32] = {0};
 static uint8_t gcs_id_public[32] = {0};
 
-static ul_ecdh_state_t ecdh_state = UL_ECDH_IDLE;
+static ks_ecdh_state_t ecdh_state = KS_ECDH_IDLE;
 static uint8_t ecdh_seq_num = 1;         // Our handshake sequence number
 static uint8_t ecdh_peer_seq = 0;        // Peer's sequence number
 static uint32_t ecdh_retry_count = 0;    // Number of retries
@@ -65,26 +65,26 @@ static const char *mode_names[] = {
 
 static const char *get_mode_name(uint8_t mode)
 {
-    if (mode <= UL_MODE_LAND)
+    if (mode <= KS_MODE_LAND)
         return mode_names[mode];
     return "UNKNOWN";
 }
 
 // --- Nonce Persistence (NVM) Helpers ---
-static void save_nonce_state(const ul_nonce_state_t *state, const char *filename)
+static void save_nonce_state(const ks_nonce_state_t *state, const char *filename)
 {
     FILE *f = fopen(filename, "wb");
     if (f)
     {
-        uint32_t current_counter = ul_nonce_get_counter(state);
+        uint32_t current_counter = ks_nonce_get_counter(state);
         fwrite(&current_counter, sizeof(uint32_t), 1, f);
         fclose(f);
     }
 }
 
-static void load_nonce_state(ul_nonce_state_t *state, const char *filename)
+static void load_nonce_state(ks_nonce_state_t *state, const char *filename)
 {
-    ul_nonce_init(state);
+    ks_nonce_init(state);
     FILE *f = fopen(filename, "rb");
     if (f)
     {
@@ -93,7 +93,7 @@ static void load_nonce_state(ul_nonce_state_t *state, const char *filename)
         {
             // Jump by 10000 to prevent reuse if power was lost before a save
             saved_counter += 10000;
-            ul_nonce_set_counter(state, saved_counter);
+            ks_nonce_set_counter(state, saved_counter);
             printf("NVM: Loaded nonce counter %u from %s (with safety jump)\n", saved_counter, filename);
         }
         fclose(f);
@@ -127,98 +127,98 @@ typedef struct
     uint16_t sequence;
 
     // Mission
-    ul_mission_item_t mission[16];
+    ks_mission_item_t mission[16];
     uint8_t mission_count;
 } uav_state_t;
 
 // Process a received command and return ACK
-static ul_command_ack_t process_command(uav_state_t *state, const ul_command_t *cmd)
+static ks_command_ack_t process_command(uav_state_t *state, const ks_command_t *cmd)
 {
-    ul_command_ack_t ack = {0};
+    ks_command_ack_t ack = {0};
     ack.command_id = cmd->command_id;
 
     switch (cmd->command_id)
     {
-    case UL_CMD_ARM:
+    case KS_CMD_ARM:
         if (!state->armed)
         {
             state->armed = true;
-            ack.result = UL_ACK_OK;
+            ack.result = KS_ACK_OK;
             printf("  >>> ARMED! Motors enabled.\n");
         }
         else
         {
-            ack.result = UL_ACK_REJECTED;
+            ack.result = KS_ACK_REJECTED;
             printf("  >>> ARM rejected: already armed\n");
         }
         break;
 
-    case UL_CMD_DISARM:
+    case KS_CMD_DISARM:
         if (state->armed)
         {
             state->armed = false;
-            ack.result = UL_ACK_OK;
+            ack.result = KS_ACK_OK;
             printf("  >>> DISARMED. Motors disabled.\n");
         }
         else
         {
-            ack.result = UL_ACK_REJECTED;
+            ack.result = KS_ACK_REJECTED;
             printf("  >>> DISARM rejected: already disarmed\n");
         }
         break;
 
-    case UL_CMD_TAKEOFF:
+    case KS_CMD_TAKEOFF:
         if (state->armed)
         {
             uint16_t target_alt_cm = cmd->param1;
             printf("  >>> TAKEOFF to %u cm\n", target_alt_cm);
             state->alt = target_alt_cm * 10; // Convert cm to mm
-            ack.result = UL_ACK_OK;
+            ack.result = KS_ACK_OK;
         }
         else
         {
-            ack.result = UL_ACK_REJECTED;
+            ack.result = KS_ACK_REJECTED;
             printf("  >>> TAKEOFF rejected: not armed\n");
         }
         break;
 
-    case UL_CMD_LAND:
+    case KS_CMD_LAND:
         if (state->armed)
         {
             printf("  >>> LANDING initiated\n");
-            state->flight_mode = UL_MODE_LAND;
-            ack.result = UL_ACK_OK;
+            state->flight_mode = KS_MODE_LAND;
+            ack.result = KS_ACK_OK;
         }
         else
         {
-            ack.result = UL_ACK_REJECTED;
+            ack.result = KS_ACK_REJECTED;
             printf("  >>> LAND rejected: not armed\n");
         }
         break;
 
-    case UL_CMD_RTL:
+    case KS_CMD_RTL:
         if (state->armed)
         {
             printf("  >>> RTL initiated\n");
-            state->flight_mode = UL_MODE_RTL;
-            ack.result = UL_ACK_OK;
+            state->flight_mode = KS_MODE_RTL;
+            ack.result = KS_ACK_OK;
         }
         else
         {
-            ack.result = UL_ACK_REJECTED;
+            ack.result = KS_ACK_REJECTED;
             printf("  >>> RTL rejected: not armed\n");
         }
         break;
 
-    case UL_CMD_EMERGENCY:
+    case KS_CMD_EMERGENCY:
         printf("  >>> !!! EMERGENCY STOP !!!\n");
         state->armed = false;
-        state->flight_mode = UL_MODE_MANUAL;
-        ack.result = UL_ACK_OK;
+        state->flight_mode = KS_MODE_MANUAL;
+        ack.result = KS_ACK_OK;
         break;
 
     default:
-        ack.result = UL_ACK_UNSUPPORTED;
+        ack.result = KS_ACK_UNSUPPORTED;
         printf("  >>> Unknown command 0x%04X\n", cmd->command_id);
         break;
     }
@@ -228,40 +228,40 @@ static ul_command_ack_t process_command(uav_state_t *state, const ul_command_t *
 
 // Send an ACK packet back to GCS
 static void send_ack(int sock, struct sockaddr_in *dest,
-                     const ul_command_ack_t *ack, uav_state_t *state,
-                     ul_mempool_t *pool, ul_nonce_state_t *nonce_state,
-                     ul_crypto_ctx_t *crypto_ctx)
+                     const ks_command_ack_t *ack, uav_state_t *state,
+                     ks_mempool_t *pool, ks_nonce_state_t *nonce_state,
+                     ks_crypto_ctx_t *crypto_ctx)
 {
     uint8_t payload[32];
-    int payload_len = ul_serialize_command_ack(ack, payload);
+    int payload_len = ks_serialize_command_ack(ack, payload);
 
-    ul_header_t header = {0};
+    ks_header_t header = {0};
     header.payload_len = payload_len;
-    header.priority = UL_PRIO_HIGH;
-    header.stream_type = UL_STREAM_CMD_ACK;
+    header.priority = KS_PRIO_HIGH;
+    header.stream_type = KS_STREAM_CMD_ACK;
     header.encrypted = true;
     header.sequence = state->sequence++;
     header.sys_id = 1;
     header.comp_id = 1;
     header.target_sys_id = 255; // GCS
-    header.msg_id = UL_MSG_CMD_ACK;
+    header.msg_id = KS_MSG_CMD_ACK;
 
     uint8_t *packet_buf = NULL;
-    int packet_len = ul_pack_fast(pool, &header, payload, session_key,
+    int packet_len = ks_pack_fast(pool, &header, payload, session_key,
                                   nonce_state, crypto_ctx, &packet_buf);
 
     if (packet_len > 0 && packet_buf)
     {
         sendto(sock, (char *)packet_buf, packet_len, 0,
                (struct sockaddr *)dest, sizeof(*dest));
-        ul_mempool_free(pool, packet_buf);
+        ks_mempool_free(pool, packet_buf);
     }
 }
 
 int main(int argc, char *argv[])
 {
-    printf("=== UAVLink Bidirectional UAV Simulator ===\n\n");
-    printf("[UAVLink] Hello, friend.\n\n");
+    printf("=== Kestrel Bidirectional UAV Simulator ===\n\n");
+    printf("[Kestrel] Hello, friend.\n\n");
 
     // Determine GCS IP and Ports
     const char *gcs_ip = "127.0.0.1";
@@ -311,17 +311,17 @@ int main(int argc, char *argv[])
     printf("Identity loaded: EdDSA Keys loaded successfully\n");
 
     // Initialize systems
-    ul_mempool_t pool;
-    ul_mempool_init(&pool);
+    ks_mempool_t pool;
+    ks_mempool_init(&pool);
 
-    ul_nonce_state_t nonce_state;
+    ks_nonce_state_t nonce_state;
     load_nonce_state(&nonce_state, "uav_nonce.dat");
 
-    ul_crypto_ctx_t crypto_ctx;
-    ul_crypto_ctx_init(&crypto_ctx);
+    ks_crypto_ctx_t crypto_ctx;
+    ks_crypto_ctx_init(&crypto_ctx);
 
     printf("Crypto: Software | Memory Pool: %d x %d bytes\n\n",
-           UL_MEMPOOL_NUM_BUFFERS, UL_MEMPOOL_BUFFER_SIZE);
+           KS_MEMPOOL_NUM_BUFFERS, KS_MEMPOOL_BUFFER_SIZE);
 
 // Setup Winsock
 #ifdef _WIN32
@@ -396,21 +396,21 @@ int main(int argc, char *argv[])
     state.voltage = 12600;
     state.current = -500;
     state.armed = false;
-    state.flight_mode = UL_MODE_MANUAL;
+    state.flight_mode = KS_MODE_MANUAL;
     state.sequence = 0;
 
     // Zero-copy parser for incoming commands
-    ul_parser_zerocopy_t cmd_parser;
-    ul_parser_zerocopy_init(&cmd_parser);
+    ks_parser_zerocopy_t cmd_parser;
+    ks_parser_zerocopy_init(&cmd_parser);
 
     uint32_t packets_sent = 0;
     uint32_t commands_received = 0;
     uint8_t cmd_recv_buf[2048];
 
     // Fragment reassembly context
-    ul_reassembly_ctx_t reasm_ctx;
-    ul_reassembly_init(&reasm_ctx);
-    uint8_t reasm_output[UL_FRAG_MAX_TOTAL];
+    ks_reassembly_ctx_t reasm_ctx;
+    ks_reassembly_init(&reasm_ctx);
+    uint8_t reasm_output[KS_FRAG_MAX_TOTAL];
     uint16_t reasm_output_len = 0;
 
     // Main loop — send telemetry + check for commands
@@ -432,15 +432,15 @@ int main(int argc, char *argv[])
         if (recv_len > 10 && cmd_recv_buf[0] == 0xA5)
         {
             // Parse the command packet
-            uint8_t *parse_buf = (uint8_t *)ul_mempool_alloc(&pool);
+            uint8_t *parse_buf = (uint8_t *)ks_mempool_alloc(&pool);
             if (parse_buf)
             {
-                ul_parser_zerocopy_init(&cmd_parser); // Reset parser
+                ks_parser_zerocopy_init(&cmd_parser); // Reset parser
 
                 int result = 0;
                 for (int i = 0; i < recv_len && result <= 0; i++)
                 {
-                    result = ul_parse_char_zerocopy(&cmd_parser, cmd_recv_buf[i], parse_buf);
+                    result = ks_parse_char_zerocopy(&cmd_parser, cmd_recv_buf[i], parse_buf);
                 }
 
                 if (result == 1)
@@ -449,11 +449,11 @@ int main(int argc, char *argv[])
                     last_gcs_msg_time = loop; // Reset failsafe timer
 
                     // Decode header
-                    ul_header_t hdr = {0};
+                    ks_header_t hdr = {0};
                     hdr.msg_id = cmd_parser.msg_id;
                     hdr.payload_len = cmd_parser.payload_len;
-                    hdr.encrypted = (cmd_parser.header_buf[3] & UL_FLAG_ENCRYPTED) != 0;
-                    hdr.fragmented = (cmd_parser.header_buf[3] & UL_FLAG_FRAGMENTED) != 0;
+                    hdr.encrypted = (cmd_parser.header_buf[3] & KS_FLAG_ENCRYPTED) != 0;
+                    hdr.fragmented = (cmd_parser.header_buf[3] & KS_FLAG_FRAGMENTED) != 0;
 
                     // Parse frag fields from extended header if fragmented
                     if (hdr.fragmented)
@@ -461,7 +461,7 @@ int main(int argc, char *argv[])
                         // frag_index and frag_total are after sys/comp/msg routing
                         uint8_t stream_type = ((cmd_parser.header_buf[1] & 0x3) << 2) |
                                               ((cmd_parser.header_buf[2] >> 6) & 0x3);
-                        bool is_cmd_stream = (stream_type == UL_STREAM_CMD || stream_type == UL_STREAM_CMD_ACK);
+                        bool is_cmd_stream = (stream_type == KS_STREAM_CMD || stream_type == KS_STREAM_CMD_ACK);
                         int frag_offset = 4 + 4 + (is_cmd_stream ? 1 : 0); // base + ext routing + target
                         hdr.frag_index = cmd_parser.header_buf[frag_offset];
                         hdr.frag_total = cmd_parser.header_buf[frag_offset + 1];
@@ -477,8 +477,8 @@ int main(int argc, char *argv[])
                         // Determine header length for AAD (includes entire header from SOF)
                         uint8_t stream_type = ((cmd_parser.header_buf[1] & 0x3) << 2) |
                                               ((cmd_parser.header_buf[2] >> 6) & 0x3);
-                        bool is_cmd = (stream_type == UL_STREAM_CMD || stream_type == UL_STREAM_CMD_ACK);
-                        size_t header_len = 4 + (is_cmd ? 5 : 4) + (cmd_parser.header_buf[3] & UL_FLAG_ENCRYPTED ? 8 : 0);
+                        bool is_cmd = (stream_type == KS_STREAM_CMD || stream_type == KS_STREAM_CMD_ACK);
+                        size_t header_len = 4 + (is_cmd ? 5 : 4) + (cmd_parser.header_buf[3] & KS_FLAG_ENCRYPTED ? 8 : 0);
 
                         // Need monocypher for decryption
                         extern int crypto_aead_unlock(
@@ -497,7 +497,7 @@ int main(int argc, char *argv[])
                         if (auth_result != 0)
                         {
                             printf("[CMD] Authentication failed! Ignoring.\n");
-                            ul_mempool_free(&pool, parse_buf);
+                            ks_mempool_free(&pool, parse_buf);
                             goto next_iter;
                         }
                     }
@@ -506,13 +506,13 @@ int main(int argc, char *argv[])
 
                     switch (hdr.msg_id)
                     {
-                    case UL_MSG_KEY_EXCHANGE:
+                    case KS_MSG_KEY_EXCHANGE:
                     {
-                        ul_key_exchange_t rx_kx;
-                        ul_deserialize_key_exchange(&rx_kx, parse_buf);
+                        ks_key_exchange_t rx_kx;
+                        ks_deserialize_key_exchange(&rx_kx, parse_buf);
 
                         // Ignore duplicate KEY_EXCHANGE (same seq_num we already processed)
-                        if (ecdh_state == UL_ECDH_ESTABLISHED && rx_kx.seq_num == ecdh_peer_seq)
+                        if (ecdh_state == KS_ECDH_ESTABLISHED && rx_kx.seq_num == ecdh_peer_seq)
                         {
                             printf("  (Duplicate KEY_EXCHANGE seq=%u, already established)\n", rx_kx.seq_num);
                             break;
@@ -544,7 +544,7 @@ int main(int argc, char *argv[])
                         printf("  >>> ECDH: Received GCS key (seq=%u), sending UAV key\n", rx_kx.seq_num);
 
                         // Send our KEY_EXCHANGE immediately
-                        ul_key_exchange_t kx_reply = {0};
+                        ks_key_exchange_t kx_reply = {0};
                         memcpy(kx_reply.public_key, public_key, 32);
                         kx_reply.seq_num = ecdh_seq_num;
 
@@ -554,76 +554,76 @@ int main(int argc, char *argv[])
                         crypto_eddsa_sign(kx_reply.signature, uav_id_secret, data_to_sign, 33);
 
                         uint8_t kx_payload[97];
-                        int kx_payload_len = ul_serialize_key_exchange(&kx_reply, kx_payload);
+                        int kx_payload_len = ks_serialize_key_exchange(&kx_reply, kx_payload);
 
-                        ul_header_t kx_hdr = {0};
+                        ks_header_t kx_hdr = {0};
                         kx_hdr.payload_len = kx_payload_len;
-                        kx_hdr.priority = UL_PRIO_HIGH;
-                        kx_hdr.stream_type = UL_STREAM_CMD;
+                        kx_hdr.priority = KS_PRIO_HIGH;
+                        kx_hdr.stream_type = KS_STREAM_CMD;
                         kx_hdr.encrypted = false;
                         kx_hdr.sequence = state.sequence++;
                         kx_hdr.sys_id = 1;
                         kx_hdr.comp_id = 1;
                         kx_hdr.target_sys_id = 255;
-                        kx_hdr.msg_id = UL_MSG_KEY_EXCHANGE;
+                        kx_hdr.msg_id = KS_MSG_KEY_EXCHANGE;
 
                         uint8_t *kx_buf = NULL;
-                        int kx_pkt_len = ul_pack_fast(&pool, &kx_hdr, kx_payload, session_key,
+                        int kx_pkt_len = ks_pack_fast(&pool, &kx_hdr, kx_payload, session_key,
                                                       &nonce_state, &crypto_ctx, &kx_buf);
                         if (kx_pkt_len > 0 && kx_buf)
                         {
                             sendto(telem_sock, (char *)kx_buf, kx_pkt_len, 0,
                                    (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                            ul_mempool_free(&pool, kx_buf);
+                            ks_mempool_free(&pool, kx_buf);
                         }
 
                         // Mark ESTABLISHED immediately - we have both keys now
-                        ecdh_state = UL_ECDH_ESTABLISHED;
+                        ecdh_state = KS_ECDH_ESTABLISHED;
                         ecdh_retry_count = 0;
                         ecdh_last_send_time = get_time_ms();
 
                         printf("  >>> ECDH: Session ESTABLISHED! (received GCS key, sent UAV key)\n");
-                        printf("[UAVLink] Unicorn, Alpha, Victor. Link is hot.\n");
+                        printf("[Kestrel] Unicorn, Alpha, Victor. Link is hot.\n");
                         fflush(stdout);
 
                         // Send ACK when we receive KEY_EXCHANGE
-                        ul_key_exchange_ack_t kx_ack = {0};
+                        ks_key_exchange_ack_t kx_ack = {0};
                         kx_ack.seq_num = rx_kx.seq_num;
                         kx_ack.status = 0; // OK
 
                         uint8_t ack_payload[2];
-                        int ack_len = ul_serialize_key_exchange_ack(&kx_ack, ack_payload);
+                        int ack_len = ks_serialize_key_exchange_ack(&kx_ack, ack_payload);
 
-                        ul_header_t ack_hdr = {0};
+                        ks_header_t ack_hdr = {0};
                         ack_hdr.payload_len = ack_len;
-                        ack_hdr.priority = UL_PRIO_HIGH;
-                        ack_hdr.stream_type = UL_STREAM_CMD_ACK;
+                        ack_hdr.priority = KS_PRIO_HIGH;
+                        ack_hdr.stream_type = KS_STREAM_CMD_ACK;
                         ack_hdr.encrypted = false;
                         ack_hdr.sequence = state.sequence++;
                         ack_hdr.sys_id = 1;
                         ack_hdr.comp_id = 1;
                         ack_hdr.target_sys_id = 255;
-                        ack_hdr.msg_id = UL_MSG_KEY_EXCHANGE_ACK;
+                        ack_hdr.msg_id = KS_MSG_KEY_EXCHANGE_ACK;
 
                         uint8_t *ack_buf = NULL;
-                        int ack_pkt_len = ul_pack_fast(&pool, &ack_hdr, ack_payload, session_key,
+                        int ack_pkt_len = ks_pack_fast(&pool, &ack_hdr, ack_payload, session_key,
                                                        &nonce_state, &crypto_ctx, &ack_buf);
                         if (ack_pkt_len > 0 && ack_buf)
                         {
                             sendto(telem_sock, (char *)ack_buf, ack_pkt_len, 0,
                                    (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                            ul_mempool_free(&pool, ack_buf);
+                            ks_mempool_free(&pool, ack_buf);
                         }
                         break;
                     }
-                    case UL_MSG_KEY_EXCHANGE_ACK:
+                    case KS_MSG_KEY_EXCHANGE_ACK:
                     {
-                        ul_key_exchange_ack_t rx_ack;
-                        ul_deserialize_key_exchange_ack(&rx_ack, parse_buf);
+                        ks_key_exchange_ack_t rx_ack;
+                        ks_deserialize_key_exchange_ack(&rx_ack, parse_buf);
 
                         // Check if this ACK is for our current handshake
                         // Mark as ESTABLISHED if we have session_key computed
-                        if (rx_ack.seq_num == ecdh_seq_num && ecdh_state >= UL_ECDH_SENT_KEY && ecdh_state != UL_ECDH_ESTABLISHED)
+                        if (rx_ack.seq_num == ecdh_seq_num && ecdh_state >= KS_ECDH_SENT_KEY && ecdh_state != KS_ECDH_ESTABLISHED)
                         {
                             // Check if session_key is valid (not all zeros)
                             bool has_key = false;
@@ -636,16 +636,16 @@ int main(int argc, char *argv[])
 
                             if (has_key) {
                                 // We have session_key, mark ESTABLISHED
-                                ecdh_state = UL_ECDH_ESTABLISHED;
+                                ecdh_state = KS_ECDH_ESTABLISHED;
                                 ecdh_retry_count = 0;
                                 printf("  >>> ECDH: Received ACK for seq=%u, session ESTABLISHED!\n", ecdh_seq_num);
-                                printf("[UAVLink] Unicorn, Alpha, Victor. Link is hot.\n");
+                                printf("[Kestrel] Unicorn, Alpha, Victor. Link is hot.\n");
                                 fflush(stdout);
                             } else {
                                 printf("  >>> ECDH: Received ACK for seq=%u (waiting for GCS KEY_EXCHANGE)\n", ecdh_seq_num);
                             }
                         }
-                        else if (rx_ack.seq_num == ecdh_seq_num && ecdh_state == UL_ECDH_ESTABLISHED)
+                        else if (rx_ack.seq_num == ecdh_seq_num && ecdh_state == KS_ECDH_ESTABLISHED)
                         {
                             printf("  (ACK for seq=%u received, session already established)\n", ecdh_seq_num);
                         }
@@ -656,41 +656,41 @@ int main(int argc, char *argv[])
                         }
                         break;
                     }
-                    case UL_MSG_CMD:
+                    case KS_MSG_CMD:
                     {
-                        if (ecdh_state != UL_ECDH_ESTABLISHED)
+                        if (ecdh_state != KS_ECDH_ESTABLISHED)
                             break;
 
-                        ul_command_t cmd;
-                        ul_deserialize_command(&cmd, parse_buf);
+                        ks_command_t cmd;
+                        ks_deserialize_command(&cmd, parse_buf);
                         printf("Command received: 0x%04X param1=%u\n", cmd.command_id, cmd.param1);
 
-                        ul_command_ack_t ack = process_command(&state, &cmd);
+                        ks_command_ack_t ack = process_command(&state, &cmd);
                         send_ack(telem_sock, &gcs_telem_addr, &ack, &state,
                                  &pool, &nonce_state, &crypto_ctx);
                         break;
                     }
-                    case UL_MSG_MODE_CHANGE:
+                    case KS_MSG_MODE_CHANGE:
                     {
-                        if (ecdh_state != UL_ECDH_ESTABLISHED)
+                        if (ecdh_state != KS_ECDH_ESTABLISHED)
                             break;
 
-                        ul_mode_change_t mode;
-                        ul_deserialize_mode_change(&mode, parse_buf);
+                        ks_mode_change_t mode;
+                        ks_deserialize_mode_change(&mode, parse_buf);
                         printf("Mode change -> %s (0x%02X)\n",
                                get_mode_name(mode.mode), mode.mode);
 
                         state.flight_mode = mode.mode;
 
-                        ul_command_ack_t ack = {0};
-                        ack.command_id = UL_MSG_MODE_CHANGE;
-                        ack.result = UL_ACK_OK;
+                        ks_command_ack_t ack = {0};
+                        ack.command_id = KS_MSG_MODE_CHANGE;
+                        ack.result = KS_ACK_OK;
                         send_ack(telem_sock, &gcs_telem_addr, &ack, &state,
                                  &pool, &nonce_state, &crypto_ctx);
                         printf("  >>> Mode set to %s\n", get_mode_name(state.flight_mode));
                         break;
                     }
-                    case UL_MSG_MISSION_ITEM:
+                    case KS_MSG_MISSION_ITEM:
                     {
                         // Check if fragmented
                         if (hdr.fragmented)
@@ -698,7 +698,7 @@ int main(int argc, char *argv[])
                             printf("Fragment %d/%d received (%d bytes)\n",
                                    hdr.frag_index + 1, hdr.frag_total, hdr.payload_len);
 
-                            int reasm_result = ul_reassembly_add(&reasm_ctx, &hdr,
+                            int reasm_result = ks_reassembly_add(&reasm_ctx, &hdr,
                                                                  parse_buf, hdr.payload_len,
                                                                  reasm_output, &reasm_output_len);
 
@@ -714,8 +714,8 @@ int main(int argc, char *argv[])
                                 state.mission_count = 0;
                                 for (uint8_t w = 0; w < num_wps && roff + 20 <= reasm_output_len; w++)
                                 {
-                                    ul_mission_item_t wp;
-                                    ul_deserialize_mission_item(&wp, reasm_output + roff);
+                                    ks_mission_item_t wp;
+                                    ks_deserialize_mission_item(&wp, reasm_output + roff);
                                     roff += 20;
 
                                     if (wp.seq < 16)
@@ -733,9 +733,9 @@ int main(int argc, char *argv[])
                                 }
 
                                 // Send ACK for completed mission
-                                ul_command_ack_t ack = {0};
-                                ack.command_id = UL_MSG_MISSION_ITEM;
-                                ack.result = UL_ACK_OK;
+                                ks_command_ack_t ack = {0};
+                                ack.command_id = KS_MSG_MISSION_ITEM;
+                                ack.result = KS_ACK_OK;
                                 send_ack(telem_sock, &gcs_telem_addr, &ack, &state,
                                          &pool, &nonce_state, &crypto_ctx);
                                 printf("  >>> Mission stored! %u waypoints total\n",
@@ -753,8 +753,8 @@ int main(int argc, char *argv[])
                         else
                         {
                             // Single (non-fragmented) waypoint
-                            ul_mission_item_t item;
-                            ul_deserialize_mission_item(&item, parse_buf);
+                            ks_mission_item_t item;
+                            ks_deserialize_mission_item(&item, parse_buf);
                             printf("Mission WP#%u: lat=%d lon=%d alt=%dmm\n",
                                    item.seq, item.lat, item.lon, item.alt);
 
@@ -765,9 +765,9 @@ int main(int argc, char *argv[])
                                     state.mission_count = item.seq + 1;
                             }
 
-                            ul_command_ack_t ack = {0};
-                            ack.command_id = UL_MSG_MISSION_ITEM;
-                            ack.result = UL_ACK_OK;
+                            ks_command_ack_t ack = {0};
+                            ack.command_id = KS_MSG_MISSION_ITEM;
+                            ack.result = KS_ACK_OK;
                             send_ack(telem_sock, &gcs_telem_addr, &ack, &state,
                                      &pool, &nonce_state, &crypto_ctx);
                             printf("  >>> Waypoint %u stored (%u total)\n",
@@ -781,7 +781,7 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                ul_mempool_free(&pool, parse_buf);
+                ks_mempool_free(&pool, parse_buf);
             }
         }
     next_iter:; // Empty statement required after label before declaration
@@ -798,27 +798,27 @@ int main(int argc, char *argv[])
             state.voltage -= 1;
 
             // Failsafe Check: 3 seconds without a message (30 ticks at 100ms)
-            if ((loop - last_gcs_msg_time) > 30 && state.flight_mode != UL_MODE_RTL && state.flight_mode != UL_MODE_LAND)
+            if ((loop - last_gcs_msg_time) > 30 && state.flight_mode != KS_MODE_RTL && state.flight_mode != KS_MODE_LAND)
             {
                 printf("\n>>> FAILSAFE TRIGGERED: Link Lost! Auto-RTL engaged. <<<\n\n");
-                state.flight_mode = UL_MODE_RTL;
+                state.flight_mode = KS_MODE_RTL;
             }
         }
 
         // --- Send telemetry ---
 
         // ECDH Handshake with Exponential Backoff and Timeout
-        if (ecdh_state != UL_ECDH_ESTABLISHED)
+        if (ecdh_state != KS_ECDH_ESTABLISHED)
         {
             uint32_t current_time = get_time_ms();
 
             // Check for timeout - restart handshake if we've been stuck
-            if (ecdh_state != UL_ECDH_IDLE &&
+            if (ecdh_state != KS_ECDH_IDLE &&
                 (current_time - ecdh_last_send_time) > ecdh_timeout_ms)
             {
                 printf("\n>>> ECDH: Timeout! Restarting handshake (was in state %u) <<<\n", ecdh_state);
-                printf("[UAVLink] A half-blood's patience has limits. Connection timed out.\n");
-                ecdh_state = UL_ECDH_IDLE;
+                printf("[Kestrel] A half-blood's patience has limits. Connection timed out.\n");
+                ecdh_state = KS_ECDH_IDLE;
                 ecdh_retry_count = 0;
                 ecdh_seq_num++; // Increment sequence for new attempt
             }
@@ -829,10 +829,10 @@ int main(int argc, char *argv[])
                 backoff_ms = 2000;
 
             // Send KEY_EXCHANGE if not established and backoff elapsed
-            if (ecdh_state != UL_ECDH_ESTABLISHED &&
+            if (ecdh_state != KS_ECDH_ESTABLISHED &&
                 (current_time - ecdh_last_send_time) >= backoff_ms)
             {
-                ul_key_exchange_t kx = {0};
+                ks_key_exchange_t kx = {0};
                 memcpy(kx.public_key, public_key, 32);
                 kx.seq_num = ecdh_seq_num;
 
@@ -843,29 +843,29 @@ int main(int argc, char *argv[])
                 crypto_eddsa_sign(kx.signature, uav_id_secret, data_to_sign, 33);
 
                 uint8_t payload[97];
-                int payload_len = ul_serialize_key_exchange(&kx, payload);
+                int payload_len = ks_serialize_key_exchange(&kx, payload);
 
-                ul_header_t header = {0};
+                ks_header_t header = {0};
                 header.payload_len = payload_len;
-                header.priority = UL_PRIO_HIGH;
-                header.stream_type = UL_STREAM_CMD;
+                header.priority = KS_PRIO_HIGH;
+                header.stream_type = KS_STREAM_CMD;
                 header.encrypted = false;
                 header.sequence = state.sequence++;
                 header.sys_id = 1;
                 header.comp_id = 1;
                 header.target_sys_id = 255; // GCS
-                header.msg_id = UL_MSG_KEY_EXCHANGE;
+                header.msg_id = KS_MSG_KEY_EXCHANGE;
 
                 uint8_t *packet_buf = NULL;
-                int packet_len = ul_pack_fast(&pool, &header, payload, session_key,
+                int packet_len = ks_pack_fast(&pool, &header, payload, session_key,
                                               &nonce_state, &crypto_ctx, &packet_buf);
                 if (packet_len > 0 && packet_buf)
                 {
                     sendto(telem_sock, (char *)packet_buf, packet_len, 0,
                            (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                    ul_mempool_free(&pool, packet_buf);
+                    ks_mempool_free(&pool, packet_buf);
 
-                    ecdh_state = UL_ECDH_SENT_KEY;
+                    ecdh_state = KS_ECDH_SENT_KEY;
                     ecdh_last_send_time = current_time;
                     ecdh_retry_count++;
 
@@ -878,71 +878,71 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (ecdh_state != UL_ECDH_ESTABLISHED)
+        if (ecdh_state != KS_ECDH_ESTABLISHED)
             goto end_loop;
 
         // Heartbeat (1 Hz)
         if (loop % 10 == 0)
         {
-            ul_heartbeat_t hb = {0};
+            ks_heartbeat_t hb = {0};
             hb.system_status = state.armed ? 0x04 : 0x03; // Active vs Standby
             hb.system_type = 0x02;                        // Quadcopter
             hb.base_mode = state.armed ? 0x81 : 0x01;     // Armed flag in bit 7
             hb.base_mode |= (state.flight_mode << 2);
 
             uint8_t payload[32];
-            int payload_len = ul_serialize_heartbeat(&hb, payload);
+            int payload_len = ks_serialize_heartbeat(&hb, payload);
 
-            ul_header_t header = {0};
+            ks_header_t header = {0};
             header.payload_len = payload_len;
-            header.priority = UL_PRIO_NORMAL;
-            header.stream_type = UL_STREAM_HEARTBEAT;
+            header.priority = KS_PRIO_NORMAL;
+            header.stream_type = KS_STREAM_HEARTBEAT;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
-            header.msg_id = UL_MSG_HEARTBEAT;
+            header.msg_id = KS_MSG_HEARTBEAT;
 
             uint8_t *packet_buf = NULL;
-            int packet_len = ul_pack_fast(&pool, &header, payload, session_key,
+            int packet_len = ks_pack_fast(&pool, &header, payload, session_key,
                                           &nonce_state, &crypto_ctx, &packet_buf);
 
             if (packet_len > 0 && packet_buf)
             {
                 sendto(telem_sock, (char *)packet_buf, packet_len, 0,
                        (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                ul_mempool_free(&pool, packet_buf);
+                ks_mempool_free(&pool, packet_buf);
                 packets_sent++;
             }
         }
 
         // Attitude (10 Hz)
         {
-            ul_attitude_t att = {0};
+            ks_attitude_t att = {0};
             att.roll = state.roll;
             att.pitch = state.pitch;
             att.yaw = state.yaw;
 
             uint8_t payload[32];
-            int payload_len = ul_serialize_attitude(&att, payload);
+            int payload_len = ks_serialize_attitude(&att, payload);
 
-            ul_header_t header = {0};
+            ks_header_t header = {0};
             header.payload_len = payload_len;
-            header.priority = UL_PRIO_HIGH;
-            header.stream_type = UL_STREAM_TELEM_FAST;
+            header.priority = KS_PRIO_HIGH;
+            header.stream_type = KS_STREAM_TELEM_FAST;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
-            header.msg_id = UL_MSG_ATTITUDE;
+            header.msg_id = KS_MSG_ATTITUDE;
 
             uint8_t *packet_buf = NULL;
-            int packet_len = ul_pack_fast(&pool, &header, payload, session_key,
+            int packet_len = ks_pack_fast(&pool, &header, payload, session_key,
                                           &nonce_state, &crypto_ctx, &packet_buf);
 
             if (packet_len > 0 && packet_buf)
             {
                 sendto(telem_sock, (char *)packet_buf, packet_len, 0,
                        (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                ul_mempool_free(&pool, packet_buf);
+                ks_mempool_free(&pool, packet_buf);
                 packets_sent++;
             }
         }
@@ -950,7 +950,7 @@ int main(int argc, char *argv[])
         // GPS (2 Hz)
         if (loop % 5 == 0)
         {
-            ul_gps_raw_t gps = {0};
+            ks_gps_raw_t gps = {0};
             gps.lat = state.lat;
             gps.lon = state.lon;
             gps.alt = state.alt;
@@ -958,26 +958,26 @@ int main(int argc, char *argv[])
             gps.satellites = 12;
 
             uint8_t payload[32];
-            int payload_len = ul_serialize_gps_raw(&gps, payload);
+            int payload_len = ks_serialize_gps_raw(&gps, payload);
 
-            ul_header_t header = {0};
+            ks_header_t header = {0};
             header.payload_len = payload_len;
-            header.priority = UL_PRIO_NORMAL;
-            header.stream_type = UL_STREAM_TELEM_SLOW;
+            header.priority = KS_PRIO_NORMAL;
+            header.stream_type = KS_STREAM_TELEM_SLOW;
             header.sequence = state.sequence++;
             header.sys_id = 1;
             header.comp_id = 1;
-            header.msg_id = UL_MSG_GPS_RAW;
+            header.msg_id = KS_MSG_GPS_RAW;
 
             uint8_t *packet_buf = NULL;
-            int packet_len = ul_pack_fast(&pool, &header, payload, session_key,
+            int packet_len = ks_pack_fast(&pool, &header, payload, session_key,
                                           &nonce_state, &crypto_ctx, &packet_buf);
 
             if (packet_len > 0 && packet_buf)
             {
                 sendto(telem_sock, (char *)packet_buf, packet_len, 0,
                        (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
-                ul_mempool_free(&pool, packet_buf);
+                ks_mempool_free(&pool, packet_buf);
                 packets_sent++;
             }
         }

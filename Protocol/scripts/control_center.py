@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-UAVLink Control Center - PyQt5 Testing Dashboard
-A professional GUI for managing and monitoring the UAVLink protocol.
+Kestrel Control Center - PyQt5 Testing Dashboard
+A professional GUI for managing and monitoring the Kestrel protocol.
 """
 
 import sys
@@ -104,7 +104,7 @@ class TerminalWidget(QTextEdit):
 class UAVLinkControlCenter(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("UAVLink Control Center v1.2")
+        self.setWindowTitle("Kestrel Control Center v1.2")
         self.setMinimumSize(1200, 800)
         self.gcs_start_time = None
         self.uav_start_time = None
@@ -155,7 +155,7 @@ class UAVLinkControlCenter(QMainWindow):
         header_layout.setSpacing(12)
 
         title_block = QVBoxLayout()
-        title = QLabel("UAVLink Control Center")
+        title = QLabel("Kestrel Control Center")
         title.setFont(QFont("Segoe UI", 18, QFont.Bold))
         subtitle = QLabel("Secure telemetry • Control • Diagnostics")
         subtitle.setStyleSheet(f"color: {COLORS['muted']};")

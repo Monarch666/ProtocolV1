@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
-#include "../core/uavlink_hw_crypto.h"
+#include "../core/kestrel_hw_crypto.h"
 #include "../core/monocypher.h"
 
 void print_hex(const char *label, const uint8_t *data, size_t len) {
@@ -14,9 +14,9 @@ void print_hex(const char *label, const uint8_t *data, size_t len) {
 }
 
 int main() {
-    printf("--- UAVLink NEON Known Answer Test (KAT) ---\n");
+    printf("--- Kestrel NEON Known Answer Test (KAT) ---\n");
 
-#if UL_HW_NEON_AVAILABLE
+#if KS_HW_NEON_AVAILABLE
     uint8_t key[32] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
                        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
@@ -40,7 +40,7 @@ int main() {
     crypto_chacha20_djb(ciphertext_mono, plaintext, len, key, nonce, 1);
 
     // Run NEON
-    ul_chacha20_neon(key, nonce, plaintext, ciphertext_neon, len, 1);
+    ks_chacha20_neon(key, nonce, plaintext, ciphertext_neon, len, 1);
 
     // Compare
     if (memcmp(ciphertext_mono, ciphertext_neon, len) == 0) {

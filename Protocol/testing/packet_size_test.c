@@ -1,4 +1,4 @@
-#include "uavlink.h"
+#include "kestrel.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,13 +15,13 @@ static void fill_pattern(uint8_t *buf, size_t len, uint32_t seed)
     }
 }
 
-static int parse_packet(ul_parser_t *parser, const uint8_t *packet, size_t packet_len,
-                        ul_header_t *out_hdr, uint8_t *out_payload)
+static int parse_packet(ks_parser_t *parser, const uint8_t *packet, size_t packet_len,
+                        ks_header_t *out_hdr, uint8_t *out_payload)
 {
     for (size_t i = 0; i < packet_len; i++)
     {
-        int res = ul_parse_char(parser, packet[i], NULL);
-        if (res == UL_OK)
+        int res = ks_parse_char(parser, packet[i], NULL);
+        if (res == KS_OK)
         {
             *out_hdr = parser->header;
             memcpy(out_payload, parser->payload, parser->header.payload_len);
@@ -38,29 +38,29 @@ static int parse_packet(ul_parser_t *parser, const uint8_t *packet, size_t packe
 static int test_non_fragmented(uint16_t seq, const uint8_t *payload, size_t payload_len)
 {
     uint8_t packet[2048];
-    ul_header_t header = {0};
+    ks_header_t header = {0};
     header.payload_len = (uint16_t)payload_len;
-    header.priority = UL_PRIO_NORMAL;
-    header.stream_type = UL_STREAM_TELEM_SLOW;
+    header.priority = KS_PRIO_NORMAL;
+    header.stream_type = KS_STREAM_TELEM_SLOW;
     header.encrypted = false;
     header.fragmented = false;
     header.sequence = seq;
     header.sys_id = 1;
     header.comp_id = 1;
     header.target_sys_id = 0;
-    header.msg_id = UL_MSG_HEARTBEAT;
+    header.msg_id = KS_MSG_HEARTBEAT;
 
-    int packet_len = uavlink_pack_with_nonce(packet, &header, payload, NULL);
+    int packet_len = kestrel_pack_with_nonce(packet, &header, payload, NULL);
     if (packet_len < 0)
     {
         return packet_len;
     }
 
-    ul_parser_t parser;
-    ul_parser_init(&parser);
+    ks_parser_t parser;
+    ks_parser_init(&parser);
 
-    ul_header_t rx_hdr = {0};
-    uint8_t rx_payload[UL_MAX_PAYLOAD_SIZE] = {0};
+    ks_header_t rx_hdr = {0};
+    uint8_t rx_payload[KS_MAX_PAYLOAD_SIZE] = {0};
     int parse_res = parse_packet(&parser, packet, (size_t)packet_len, &rx_hdr, rx_payload);
     if (parse_res != 1)
     {
@@ -82,45 +82,45 @@ static int test_non_fragmented(uint16_t seq, const uint8_t *payload, size_t payl
 
 static int test_fragmented(uint16_t *seq, const uint8_t *payload, size_t payload_len)
 {
-    ul_header_t base = {0};
+    ks_header_t base = {0};
     base.payload_len = 0;
-    base.priority = UL_PRIO_NORMAL;
-    base.stream_type = UL_STREAM_MISSION;
+    base.priority = KS_PRIO_NORMAL;
+    base.stream_type = KS_STREAM_MISSION;
     base.encrypted = false;
     base.fragmented = true;
     base.sequence = 0;
     base.sys_id = 1;
     base.comp_id = 1;
     base.target_sys_id = 0;
-    base.msg_id = UL_MSG_MISSION_ITEM;
+    base.msg_id = KS_MSG_MISSION_ITEM;
 
-    ul_fragment_set_t frags = {0};
-    int num_frags = ul_fragment_split(&base, payload, payload_len, &frags);
+    ks_fragment_set_t frags = {0};
+    int num_frags = ks_fragment_split(&base, payload, payload_len, &frags);
     if (num_frags <= 0)
     {
         return -2000;
     }
 
-    ul_parser_t parser;
-    ul_parser_init(&parser);
+    ks_parser_t parser;
+    ks_parser_init(&parser);
 
-    ul_reassembly_ctx_t reasm_ctx;
-    ul_reassembly_init(&reasm_ctx);
-    uint8_t reasm_output[UL_FRAG_MAX_TOTAL] = {0};
+    ks_reassembly_ctx_t reasm_ctx;
+    ks_reassembly_init(&reasm_ctx);
+    uint8_t reasm_output[KS_FRAG_MAX_TOTAL] = {0};
     uint16_t reasm_output_len = 0;
 
     for (int i = 0; i < num_frags; i++)
     {
         uint8_t packet[2048];
         frags.headers[i].sequence = (*seq)++;
-        int packet_len = uavlink_pack_with_nonce(packet, &frags.headers[i], frags.payloads[i], NULL);
+        int packet_len = kestrel_pack_with_nonce(packet, &frags.headers[i], frags.payloads[i], NULL);
         if (packet_len < 0)
         {
             return -2001;
         }
 
-        ul_header_t rx_hdr = {0};
-        uint8_t rx_payload[UL_MAX_PAYLOAD_SIZE] = {0};
+        ks_header_t rx_hdr = {0};
+        uint8_t rx_payload[KS_MAX_PAYLOAD_SIZE] = {0};
         int parse_res = parse_packet(&parser, packet, (size_t)packet_len, &rx_hdr, rx_payload);
         if (parse_res != 1)
         {
@@ -132,7 +132,7 @@ static int test_fragmented(uint16_t *seq, const uint8_t *payload, size_t payload
             return -2003;
         }
 
-        int reasm_res = ul_reassembly_add(&reasm_ctx, &rx_hdr, rx_payload,
+        int reasm_res = ks_reassembly_add(&reasm_ctx, &rx_hdr, rx_payload,
                                           rx_hdr.payload_len, reasm_output, &reasm_output_len);
         if (reasm_res < 0)
         {
@@ -174,7 +174,7 @@ int main(void)
 
     srand((unsigned int)time(NULL));
 
-    printf("UAVLink Packet Size Sweep\n");
+    printf("Kestrel Packet Size Sweep\n");
     printf("-------------------------\n");
 
     for (size_t i = 0; i < fixed_count; i++)
@@ -183,7 +183,7 @@ int main(void)
         fill_pattern(payload, len, (uint32_t)len);
 
         int res = 0;
-        if (len <= UL_FRAG_MAX_PAYLOAD)
+        if (len <= KS_FRAG_MAX_PAYLOAD)
         {
             res = test_non_fragmented(seq, payload, len);
             seq++;
@@ -211,7 +211,7 @@ int main(void)
         fill_pattern(payload, len, (uint32_t)(i + 1000));
 
         int res = 0;
-        if (len <= UL_FRAG_MAX_PAYLOAD)
+        if (len <= KS_FRAG_MAX_PAYLOAD)
         {
             res = test_non_fragmented(seq, payload, len);
             seq++;

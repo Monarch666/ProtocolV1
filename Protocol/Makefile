@@ -8,8 +8,8 @@ SRC_TOOLS = src/tools
 BIN_DIR = bin
 
 # Core Protocol Files
-CORE_SRC = $(SRC_CORE)/uavlink.c $(SRC_CORE)/uavlink_fast.c $(SRC_CORE)/uavlink_compress.c \
-           $(SRC_CORE)/uavlink_hw_crypto.c $(SRC_CORE)/monocypher.c $(SRC_CORE)/uavlink_keymanager.c
+CORE_SRC = $(SRC_CORE)/kestrel.c $(SRC_CORE)/kestrel_fast.c $(SRC_CORE)/kestrel_compress.c \
+           $(SRC_CORE)/kestrel_hw_crypto.c $(SRC_CORE)/monocypher.c $(SRC_CORE)/kestrel_keymanager.c
 
 # Platform-specific flags
 ifeq ($(OS),Windows_NT)
@@ -22,8 +22,8 @@ endif
 
 all: benchmark receiver simulator key_example
 
-benchmark: $(SRC_TOOLS)/uavlink_benchmark.c $(CORE_SRC)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/uavlink_benchmark$(EXT) $(SRC_TOOLS)/uavlink_benchmark.c $(CORE_SRC) $(LDFLAGS)
+benchmark: $(SRC_TOOLS)/kestrel_benchmark.c $(CORE_SRC)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/kestrel_benchmark$(EXT) $(SRC_TOOLS)/kestrel_benchmark.c $(CORE_SRC) $(LDFLAGS)
 
 receiver: $(SRC_APPS)/gcs_receiver.c $(CORE_SRC)
 	$(CC) $(CFLAGS) -o $(BIN_DIR)/gcs_receiver$(EXT) $(SRC_APPS)/gcs_receiver.c $(CORE_SRC) $(LDFLAGS)

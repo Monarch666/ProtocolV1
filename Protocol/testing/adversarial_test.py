@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UAVLink Security & Adversarial Testing
+Kestrel Security & Adversarial Testing
 ======================================
 
 Tests:
@@ -53,7 +53,7 @@ attack_stats = {
 
 
 def parse_uavlink_header(data):
-    """Parse UAVLink packet header to extract sequence number"""
+    """Parse Kestrel packet header to extract sequence number"""
     if len(data) < 4:
         return None
     
@@ -205,7 +205,7 @@ def print_statistics():
 def adversarial_proxy():
     """Main adversarial proxy with active attacks"""
     print("="*60)
-    print("UAVLink Security & Adversarial Testing Proxy")
+    print("Kestrel Security & Adversarial Testing Proxy")
     print("="*60)
     print(f"Intercepting UAV->GCS on {IP_ADDR}:{PROXY_TELEM_PORT}")
     print(f"Intercepting GCS->UAV on {IP_ADDR}:{PROXY_CMD_PORT}")

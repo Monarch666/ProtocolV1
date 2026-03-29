@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-UAVLink Cryptographic Key Generation Utility
+Kestrel Cryptographic Key Generation Utility
 
-Generates secure 256-bit (32-byte) encryption keys for UAVLink protocol.
+Generates secure 256-bit (32-byte) encryption keys for Kestrel protocol.
 Keys are cryptographically random using OS-level entropy sources.
 
 Usage:
@@ -73,7 +73,7 @@ def save_to_file(key, filename):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate secure encryption keys for UAVLink protocol',
+        description='Generate secure encryption keys for Kestrel protocol',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -128,7 +128,7 @@ Security Notes:
         if args.output == 'c':
             name = args.name if args.count == 1 else f"{args.name}_{i}"
             print(format_c_array(key, name))
-            print("\n[UAVLink] Suit up. Your keys are ready.")
+            print("\n[Kestrel] Suit up. Your keys are ready.")
         elif args.output == 'hex':
             print(format_hex(key))
         elif args.output == 'python':

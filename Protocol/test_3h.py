@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UAVLink 3-Hour Internal Integration Test
+Kestrel 3-Hour Internal Integration Test
 Launches GCS Receiver + UAV Simulator, monitors output for errors and
 key metrics, then produces a test report.
 """
@@ -45,10 +45,10 @@ ERRORS_FOUND = []
 _PAT_UAV_SENT     = re.compile(r"\[TEL\]|\[CMD_ACK\]|\[SEND\]|Sending")
 _PAT_GCS_RECV     = re.compile(r"\[CMD #|Received|packets_received")
 _PAT_ECDH         = re.compile(r"ECDH.*Established|session key established|ESTABLISHED", re.IGNORECASE)
-_PAT_REPLAY       = re.compile(r"Replay attack detected|SECURITY.*Replay|UL_ERR_REPLAY", re.IGNORECASE)
-_PAT_AUTH_FAIL    = re.compile(r"Authentication failed|MAC.*fail|auth_result.*-1|UL_ERR_MAC", re.IGNORECASE)
-_PAT_CRC          = re.compile(r"CRC.*error|UL_ERR_CRC", re.IGNORECASE)
-_PAT_MAC          = re.compile(r"MAC.*verification|UL_ERR_MAC|poly1305.*fail", re.IGNORECASE)
+_PAT_REPLAY       = re.compile(r"Replay attack detected|SECURITY.*Replay|KS_ERR_REPLAY", re.IGNORECASE)
+_PAT_AUTH_FAIL    = re.compile(r"Authentication failed|MAC.*fail|auth_result.*-1|KS_ERR_MAC", re.IGNORECASE)
+_PAT_CRC          = re.compile(r"CRC.*error|KS_ERR_CRC", re.IGNORECASE)
+_PAT_MAC          = re.compile(r"MAC.*verification|KS_ERR_MAC|poly1305.*fail", re.IGNORECASE)
 _PAT_COMPRESS     = re.compile(r"compress.*error|decompress.*fail|FEC.*error", re.IGNORECASE)
 _PAT_FEC          = re.compile(r"FEC.*recover|parity.*shard", re.IGNORECASE)
 _PAT_CRASH        = re.compile(r"segfault|access violation|exception|FATAL|killed|abort", re.IGNORECASE)
@@ -133,7 +133,7 @@ def write_report(elapsed):
 
     report_lines = [
         "=" * 65,
-        "  UAVLink 3-Hour Internal Integration Test Report",
+        "  Kestrel 3-Hour Internal Integration Test Report",
         f"  Generated : {time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"  Verdict   : {verdict}",
         "=" * 65,
@@ -189,7 +189,7 @@ def write_report(elapsed):
 
 def main():
     print("=" * 65)
-    print("  UAVLink 3-Hour Internal Integration Test")
+    print("  Kestrel 3-Hour Internal Integration Test")
     print(f"  Start time : {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
 

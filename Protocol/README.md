@@ -1,6 +1,6 @@
-# UAVLink Protocol
+# Kestrel Protocol (formerly Kestrel)
 
-UAVLink is a high-performance binary communication protocol purpose-built for UAV systems. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
+Kestrel is a high-performance binary communication protocol purpose-built for UAV systems. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. The reference implementation in this repository is provided under the historical `kestrel.*` filenames. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
 
 **Current Version:** 1.0 (March 2026)
 
@@ -89,36 +89,36 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 
 | File                      | Description                                     |
 | ------------------------- | ----------------------------------------------- |
-| `Protocol/uavlink.h`      | Core API, structures, and constants             |
-| `Protocol/uavlink.c`      | Encoding/decoding implementation with AEAD      |
+| `Protocol/kestrel.h`      | Core API, structures, and constants             |
+| `Protocol/kestrel.c`      | Encoding/decoding implementation with AEAD      |
 | `Protocol/monocypher.c/h` | Portable ChaCha20-Poly1305 cryptography library |
 
 #### Phase 2 Optimizations
 
 | File                      | Description                              |
 | ------------------------- | ---------------------------------------- |
-| `Protocol/uavlink_fast.h` | Zero-copy parser, memory pool APIs       |
-| `Protocol/uavlink_fast.c` | Performance optimization implementations |
+| `Protocol/kestrel_fast.h` | Zero-copy parser, memory pool APIs       |
+| `Protocol/kestrel_fast.c` | Performance optimization implementations |
 
 #### Phase 3 Advanced Features
 
 | File                          | Description                         |
 | ----------------------------- | ----------------------------------- |
-| `Protocol/uavlink_compress.h` | Delta encoding, LZ4, FEC APIs       |
-| `Protocol/uavlink_compress.c` | Compression and FEC implementations |
+| `Protocol/kestrel_compress.h` | Delta encoding, LZ4, FEC APIs       |
+| `Protocol/kestrel_compress.c` | Compression and FEC implementations |
 
 #### Hardware Acceleration
 
 | File                           | Description                    |
 | ------------------------------ | ------------------------------ |
-| `Protocol/uavlink_hw_crypto.h` | ARM NEON, x86 SIMD crypto APIs |
-| `Protocol/uavlink_hw_crypto.c` | Hardware-accelerated ChaCha20  |
+| `Protocol/kestrel_hw_crypto.h` | ARM NEON, x86 SIMD crypto APIs |
+| `Protocol/kestrel_hw_crypto.c` | Hardware-accelerated ChaCha20  |
 
 #### Testing & Examples
 
 | File                           | Description                                      |
 | ------------------------------ | ------------------------------------------------ |
-| `Protocol/uavlink_benchmark.c` | Performance profiler (1000 iterations)           |
+| `Protocol/kestrel_benchmark.c` | Performance profiler (1000 iterations)           |
 | `Protocol/gcs_receiver.c`      | Network receiver demo with Phase 2 optimizations |
 | `Protocol/uav_simulator.c`     | Network transmitter demo (supports CLI IP arg)   |
 
@@ -128,9 +128,9 @@ UAVLink is a high-performance binary communication protocol purpose-built for UA
 
 ```bash
 cd Protocol
-gcc -Wall -O2 -o uavlink_benchmark uavlink_benchmark.c uavlink.c \
-    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lm
-./uavlink_benchmark
+gcc -Wall -O2 -o kestrel_benchmark kestrel_benchmark.c kestrel.c \
+    kestrel_fast.c kestrel_compress.c kestrel_hw_crypto.c monocypher.c -lm
+./kestrel_benchmark
 ```
 
 **Option 2: Network Test (Localhost — Single PC)**
@@ -139,10 +139,10 @@ gcc -Wall -O2 -o uavlink_benchmark uavlink_benchmark.c uavlink.c \
 cd Protocol
 
 # Compile both
-gcc -Wall -O2 -o gcs_receiver gcs_receiver.c uavlink.c \
-    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lws2_32 -lm
-gcc -Wall -O2 -o uav_simulator uav_simulator.c uavlink.c \
-    uavlink_fast.c uavlink_compress.c uavlink_hw_crypto.c monocypher.c -lws2_32 -lm
+gcc -Wall -O2 -o gcs_receiver gcs_receiver.c kestrel.c \
+    kestrel_fast.c kestrel_compress.c kestrel_hw_crypto.c monocypher.c -lws2_32 -lm
+gcc -Wall -O2 -o uav_simulator uav_simulator.c kestrel.c \
+    kestrel_fast.c kestrel_compress.c kestrel_hw_crypto.c monocypher.c -lws2_32 -lm
 
 # Terminal 1: Start receiver
 ./gcs_receiver
@@ -162,18 +162,18 @@ gcc -Wall -O2 -o uav_simulator uav_simulator.c uavlink.c \
 ```
 
 > **Note:** On Windows, add a firewall rule on the receiver PC:
-> `netsh advfirewall firewall add rule name="UAVLink" dir=in action=allow protocol=UDP localport=14550`
+> `netsh advfirewall firewall add rule name="Kestrel" dir=in action=allow protocol=UDP localport=14550`
 
 **Option 4: Compile with Hardware Acceleration**
 
 ```bash
 # ARM NEON build (4x crypto speedup)
-gcc -Wall -O2 -o uavlink_test test.c uavlink.c uavlink_fast.c uavlink_compress.c \
-    uavlink_hw_crypto.c monocypher.c -mfpu=neon -march=armv7-a -lm
+gcc -Wall -O2 -o kestrel_test test.c kestrel.c kestrel_fast.c kestrel_compress.c \
+    kestrel_hw_crypto.c monocypher.c -mfpu=neon -march=armv7-a -lm
 
 # x86 AVX2 build (4x crypto speedup)
-gcc -Wall -O2 -o uavlink_test test.c uavlink.c uavlink_fast.c uavlink_compress.c \
-    uavlink_hw_crypto.c monocypher.c -mavx2 -lm
+gcc -Wall -O2 -o kestrel_test test.c kestrel.c kestrel_fast.c kestrel_compress.c \
+    kestrel_hw_crypto.c monocypher.c -mavx2 -lm
 ```
 
 ### Expected Output
@@ -214,113 +214,113 @@ Memory pool peak usage: 1/32 buffers
 
 ### Integrating into Your Code
 
-To add UAVLink to your flight controller or ground station:
+To add Kestrel Core (implemented in the `kestrel.*` files) to your flight controller or ground station:
 
 1. **Copy files** into your build tree:
-   - Core: `uavlink.h`, `uavlink.c`, `monocypher.h`, `monocypher.c`
-   - Phase 2: `uavlink_fast.h`, `uavlink_fast.c` (optional, for performance)
-   - Phase 3: `uavlink_compress.h`, `uavlink_compress.c` (optional, for compression)
-   - Hardware: `uavlink_hw_crypto.h`, `uavlink_hw_crypto.c` (optional, for SIMD)
+   - Core: `kestrel.h`, `kestrel.c`, `monocypher.h`, `monocypher.c`
+   - Phase 2: `kestrel_fast.h`, `kestrel_fast.c` (optional, for performance)
+   - Phase 3: `kestrel_compress.h`, `kestrel_compress.c` (optional, for compression)
+   - Hardware: `kestrel_hw_crypto.h`, `kestrel_hw_crypto.c` (optional, for SIMD)
 
 2. **Basic Usage (Baseline Protocol):**
 
    ```c
-   #include "uavlink.h"
+   #include "kestrel.h"
 
    // Initialize parser
-   ul_parser_t parser;
-   ul_parser_init(&parser);
+   ks_parser_t parser;
+   ks_parser_init(&parser);
 
    // Feed bytes in UART/serial loop
    uint8_t incoming_byte = uart_read();
-   int result = ul_parse_char(&parser, incoming_byte, encryption_key);
+   int result = ks_parse_char(&parser, incoming_byte, encryption_key);
 
-   if (result == UL_OK) {
+   if (result == KS_OK) {
        // Full packet received!
        handle_message(&parser.header, parser.payload);
    }
 
    // Send packets
-   ul_attitude_t att = {.roll = 0.1f, .pitch = 0.2f, .yaw = 1.5f, ...};
+   ks_attitude_t att = {.roll = 0.1f, .pitch = 0.2f, .yaw = 1.5f, ...};
    uint8_t payload[32];
-   int payload_len = ul_serialize_attitude(&att, payload);
+   int payload_len = ks_serialize_attitude(&att, payload);
 
-   ul_header_t header = {
+   ks_header_t header = {
        .payload_len = payload_len,
        .encrypted = true,
-       .msg_id = UL_MSG_ATTITUDE,
+       .msg_id = KS_MSG_ATTITUDE,
        // ... set other fields
    };
 
    uint8_t packet[256];
-   int packet_len = uavlink_pack(packet, &header, payload, encryption_key);
+   int packet_len = kestrel_pack(packet, &header, payload, encryption_key);
    uart_transmit(packet, packet_len);
    ```
 
 3. **Phase 2 Optimized Usage (2x faster parsing, O(1) allocation):**
 
    ```c
-   #include "uavlink.h"
-   #include "uavlink_fast.h"
+   #include "kestrel.h"
+   #include "kestrel_fast.h"
 
    // Initialize memory pool (once at startup)
-   ul_mempool_t pool;
-   ul_mempool_init(&pool);
+   ks_mempool_t pool;
+   ks_mempool_init(&pool);
 
    // Initialize zero-copy parser (once per connection)
-   ul_parser_zerocopy_t parser;
-   ul_parser_zerocopy_init(&parser);
+   ks_parser_zerocopy_t parser;
+   ks_parser_zerocopy_init(&parser);
 
    // Fast parsing with zero-copy
    uint8_t incoming_byte = uart_read();
    uint8_t *payload_ptr;
-   int result = ul_parse_char_zerocopy(&parser, incoming_byte, encryption_key, &payload_ptr);
+   int result = ks_parse_char_zerocopy(&parser, incoming_byte, encryption_key, &payload_ptr);
 
-   if (result == UL_OK) {
+   if (result == KS_OK) {
        // Payload pointer directly to received data (no copy!)
        handle_message(&parser.header, payload_ptr);
    }
 
    // Fast packing with memory pool + crypto cache
-   uint8_t *buffer = ul_mempool_alloc(&pool);  // O(1) allocation
-   int packet_len = ul_pack_fast(buffer, &header, payload, encryption_key, &pool);
+   uint8_t *buffer = ks_mempool_alloc(&pool);  // O(1) allocation
+   int packet_len = ks_pack_fast(buffer, &header, payload, encryption_key, &pool);
    uart_transmit(buffer, packet_len);
-   ul_mempool_free(&pool, buffer);
+   ks_mempool_free(&pool, buffer);
    ```
 
 4. **Phase 3 Advanced Usage (57% bandwidth savings for telemetry):**
 
    ```c
-   #include "uavlink_compress.h"
+   #include "kestrel_compress.h"
 
    // Initialize delta encoder (once at startup)
-   ul_delta_ctx_t delta_ctx;
-   ul_delta_init(&delta_ctx);
+   ks_delta_ctx_t delta_ctx;
+   ks_delta_init(&delta_ctx);
 
    // Encode GPS with delta compression
-   ul_gps_t gps = {.lat = 37.7749, .lon = -122.4194, .alt = 50.0f, ...};
+   ks_gps_t gps = {.lat = 37.7749, .lon = -122.4194, .alt = 50.0f, ...};
    uint8_t encoded[64];
-   int len = ul_delta_encode_gps(&delta_ctx, &gps, encoded, sizeof(encoded));
+   int len = ks_delta_encode_gps(&delta_ctx, &gps, encoded, sizeof(encoded));
    // First packet: 28 bytes, subsequent: 12 bytes (57% savings!)
 
    // Decode on receiver side
-   ul_delta_ctx_t rx_delta_ctx;
-   ul_delta_init(&rx_delta_ctx);
-   ul_gps_t decoded_gps;
-   ul_delta_decode_gps(&rx_delta_ctx, encoded, len, &decoded_gps);
+   ks_delta_ctx_t rx_delta_ctx;
+   ks_delta_init(&rx_delta_ctx);
+   ks_gps_t decoded_gps;
+   ks_delta_decode_gps(&rx_delta_ctx, encoded, len, &decoded_gps);
    ```
 
 5. **Hardware Acceleration (4x crypto speedup on ARM/x86):**
 
    ```c
-   #include "uavlink_hw_crypto.h"
+   #include "kestrel_hw_crypto.h"
 
    // Enable hardware crypto at startup (automatic backend selection)
-   ul_enable_hardware_crypto();
+   ks_enable_hardware_crypto();
 
    // All crypto operations now use NEON/AVX2 automatically
    // No code changes needed - transparent acceleration!
-   int packet_len = uavlink_pack(buffer, &header, payload, encryption_key);
+   int packet_len = kestrel_pack(buffer, &header, payload, encryption_key);
    // Now 4x faster if NEON/AVX2 available
    ```
 
@@ -344,7 +344,7 @@ To add UAVLink to your flight controller or ground station:
 - **Maximum:** 4,122 bytes (4095-byte payload + full headers)
 - **Typical:** 26-50 bytes (common telemetry messages)
 
-### UAVLink Frame – Byte-Level Breakdown
+### Kestrel Frame – Byte-Level Breakdown
 
 ```
 ┌─────┌────┌────┌────┌────┌────┌─────┌─────┌───────┌─────────┌───────┌─────┐
@@ -356,7 +356,7 @@ To add UAVLink to your flight controller or ground station:
 
 | Byte Index                                    | Content                                              | Value                                                                                                                                                | Explanation                                                                                                                                  |
 | --------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0                                             | Packet start sign                                    | `0xA5`                                                                                                                                               | Indicates the start of a new UAVLink packet                                                                                                  |
+| 0                                             | Packet start sign                                    | `0xA5`                                                                                                                                               | Indicates the start of a new Kestrel packet                                                                                                  |
 | 1                                             | Payload length [11:8] + Priority + Stream type [3:2] | Bits 7-4: Payload length upper nibble (0-15)<br>Bits 3-2: Priority (00=Bulk, 01=Normal, 10=High, 11=Emergency)<br>Bits 1-0: Stream type upper 2 bits | Bit-packed field combining 12-bit payload length MSBs, message priority for QoS, and stream type classification                              |
 | 2                                             | Payload length [7:0]                                 | 0 - 255                                                                                                                                              | Lower 8 bits of payload length. Combined with byte 1 allows payloads up to 4095 bytes                                                        |
 | 3                                             | Flags + Stream type [1:0] + Sequence [5:2]           | Bits 7-6: Flags (encrypted, fragmented)<br>Bits 5-4: Stream type lower bits<br>Bits 3-0: Sequence upper nibble                                       | Encrypted flag, fragmentation flag, stream type completion, and sequence number upper bits for packet ordering                               |
@@ -481,7 +481,7 @@ The extended header contains routing and message identification:
 **Example:**
 
 ```c
-ul_heartbeat_t hb = {
+ks_heartbeat_t hb = {
     .system_status = 0x12345678,
     .system_type = 5,         // Quadcopter
     .autopilot_type = 3,      // Custom autopilot
@@ -489,7 +489,7 @@ ul_heartbeat_t hb = {
 };
 
 uint8_t payload[7];
-ul_serialize_heartbeat(&hb, payload);
+ks_serialize_heartbeat(&hb, payload);
 ```
 
 ### 2. Attitude Message (MSG_ID 0x002)
@@ -513,7 +513,7 @@ ul_serialize_heartbeat(&hb, payload);
 **Example:**
 
 ```c
-ul_attitude_t att = {
+ks_attitude_t att = {
     .roll = 0.523f,       // ~30 degrees
     .pitch = -0.174f,     // ~-10 degrees
     .yaw = 1.571f,        // ~90 degrees
@@ -523,7 +523,7 @@ ul_attitude_t att = {
 };
 
 uint8_t payload[12];
-ul_serialize_attitude(&att, payload);
+ks_serialize_attitude(&att, payload);
 ```
 
 ### 3. GPS Raw Message (MSG_ID 0x003)
@@ -548,7 +548,7 @@ ul_serialize_attitude(&att, payload);
 **Example:**
 
 ```c
-ul_gps_raw_t gps = {
+ks_gps_raw_t gps = {
     .lat = 474977810,      // 47.4977810° (Seattle)
     .lon = -1222093200,    // -122.2093200°
     .alt = 100000,         // 100m AMSL
@@ -561,7 +561,7 @@ ul_gps_raw_t gps = {
 };
 
 uint8_t payload[22];
-ul_serialize_gps_raw(&gps, payload);
+ks_serialize_gps_raw(&gps, payload);
 ```
 
 ### 4. Battery Message (MSG_ID 0x004)
@@ -582,7 +582,7 @@ ul_serialize_gps_raw(&gps, payload);
 **Example:**
 
 ```c
-ul_battery_t bat = {
+ks_battery_t bat = {
     .voltage = 16800,      // 16.8V (4S LiPo fully charged)
     .current = -1500,      // -15A (discharging)
     .remaining = 75,       // 75% remaining
@@ -591,7 +591,7 @@ ul_battery_t bat = {
 };
 
 uint8_t payload[8];
-ul_serialize_battery(&bat, payload);
+ks_serialize_battery(&bat, payload);
 ```
 
 ### 5. RC Input Message (MSG_ID 0x005)
@@ -610,14 +610,14 @@ ul_serialize_battery(&bat, payload);
 **Example:**
 
 ```c
-ul_rc_input_t rc = {
+ks_rc_input_t rc = {
     .channels = {1500, 1600, 1400, 1500, 1800, 1200, 1500, 1500},
     .rssi = 95,
     .quality = 98
 };
 
 uint8_t payload[18];
-ul_serialize_rc_input(&rc, payload);
+ks_serialize_rc_input(&rc, payload);
 ```
 
 ---
@@ -627,7 +627,7 @@ ul_serialize_rc_input(&rc, payload);
 ### Initialization
 
 ```c
-void ul_parser_init(ul_parser_t *p);
+void ks_parser_init(ks_parser_t *p);
 ```
 
 Initialize parser state machine. Call once before first use.
@@ -639,15 +639,15 @@ Initialize parser state machine. Call once before first use.
 **Example:**
 
 ```c
-ul_parser_t parser;
-ul_parser_init(&parser);
+ks_parser_t parser;
+ks_parser_init(&parser);
 ```
 
 ### Nonce Management
 
 ```c
-void ul_nonce_init(ul_nonce_state_t *state);
-void ul_nonce_generate(ul_nonce_state_t *state, uint8_t nonce_8b[8]);
+void ks_nonce_init(ks_nonce_state_t *state);
+void ks_nonce_generate(ks_nonce_state_t *state, uint8_t nonce_8b[8]);
 ```
 
 **Nonce Initialization:**
@@ -665,22 +665,22 @@ void ul_nonce_generate(ul_nonce_state_t *state, uint8_t nonce_8b[8]);
 **Example:**
 
 ```c
-ul_nonce_state_t nonce_state;
-ul_nonce_init(&nonce_state);
+ks_nonce_state_t nonce_state;
+ks_nonce_init(&nonce_state);
 
 uint8_t nonce[8];
-ul_nonce_generate(&nonce_state, nonce);  // Use for next packet
+ks_nonce_generate(&nonce_state, nonce);  // Use for next packet
 ```
 
 ### Packet Packing
 
 ```c
-int uavlink_pack(uint8_t *buf, const ul_header_t *h,
+int kestrel_pack(uint8_t *buf, const ks_header_t *h,
                  const uint8_t *payload, const uint8_t *key_32b);
 
-int uavlink_pack_with_nonce(uint8_t *buf, const ul_header_t *h,
+int kestrel_pack_with_nonce(uint8_t *buf, const ks_header_t *h,
                              const uint8_t *payload, const uint8_t *key_32b,
-                             ul_nonce_state_t *nonce_state);
+                             ks_nonce_state_t *nonce_state);
 ```
 
 **Pack Packet:**
@@ -691,39 +691,39 @@ int uavlink_pack_with_nonce(uint8_t *buf, const ul_header_t *h,
 
 **Pack with Nonce State:**
 
-- Same as `uavlink_pack()` but auto-generates nonce
+- Same as `kestrel_pack()` but auto-generates nonce
 - Recommended for production use
 - Ensures nonce uniqueness across packets
 
 **Returns:**
 
 - Positive: Packet length (bytes)
-- `UL_ERR_NULL_POINTER` - Invalid pointer
-- `UL_ERR_BUFFER_OVERFLOW` - Payload too large (>512 bytes)
+- `KS_ERR_NULL_POINTER` - Invalid pointer
+- `KS_ERR_BUFFER_OVERFLOW` - Payload too large (>512 bytes)
 
 **Example:**
 
 ```c
-ul_header_t header = {
+ks_header_t header = {
     .payload_len = 12,
-    .priority = UL_PRIO_NORMAL,
-    .stream_type = UL_STREAM_TELEMETRY,
+    .priority = KS_PRIO_NORMAL,
+    .stream_type = KS_STREAM_TELEMETRY,
     .encrypted = true,
     .sequence = 42,
     .sys_id = 1,
     .target_sys_id = 0,  // Broadcast
-    .msg_id = UL_MSG_ATTITUDE
+    .msg_id = KS_MSG_ATTITUDE
 };
 
 uint8_t packet[256];
-int len = uavlink_pack_with_nonce(packet, &header, payload, key, &nonce_state);
+int len = kestrel_pack_with_nonce(packet, &header, payload, key, &nonce_state);
 uart_transmit(packet, len);
 ```
 
 ### Packet Parsing
 
 ```c
-int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b);
+int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b);
 ```
 
 **Parse Single Byte:**
@@ -734,35 +734,35 @@ int ul_parse_char(ul_parser_t *p, uint8_t c, const uint8_t *key_32b);
 
 **Returns:**
 
-- `UL_OK` (0) - Packet complete and valid
+- `KS_OK` (0) - Packet complete and valid
 - `1` - Still parsing, need more bytes
-- `UL_ERR_CRC` - CRC mismatch
-- `UL_ERR_MAC_VERIFICATION` - AEAD authentication failed (tampered packet)
-- `UL_ERR_NO_KEY` - Encrypted packet but no key provided
+- `KS_ERR_CRC` - CRC mismatch
+- `KS_ERR_MAC_VERIFICATION` - AEAD authentication failed (tampered packet)
+- `KS_ERR_NO_KEY` - Encrypted packet but no key provided
 
 **Example:**
 
 ```c
-ul_parser_t parser;
-ul_parser_init(&parser);
+ks_parser_t parser;
+ks_parser_init(&parser);
 
 while (uart_available()) {
     uint8_t byte = uart_read();
-    int result = ul_parse_char(&parser, byte, encryption_key);
+    int result = ks_parse_char(&parser, byte, encryption_key);
 
-    if (result == UL_OK) {
+    if (result == KS_OK) {
         // Packet complete!
         printf("Received msg_id=0x%03X from sys=%d\n",
                parser.header.msg_id, parser.header.sys_id);
 
         // Decode payload based on msg_id
-        if (parser.header.msg_id == UL_MSG_ATTITUDE) {
-            ul_attitude_t att;
-            ul_deserialize_attitude(&att, parser.payload);
+        if (parser.header.msg_id == KS_MSG_ATTITUDE) {
+            ks_attitude_t att;
+            ks_deserialize_attitude(&att, parser.payload);
             printf("Roll: %.3f, Pitch: %.3f\n", att.roll, att.pitch);
         }
     }
-    else if (result == UL_ERR_MAC_VERIFICATION) {
+    else if (result == KS_ERR_MAC_VERIFICATION) {
         printf("⚠️ Tampered packet detected!\n");
     }
 }
@@ -771,11 +771,11 @@ while (uart_available()) {
 ### Message Serialization
 
 ```c
-int ul_serialize_heartbeat(const ul_heartbeat_t *msg, uint8_t *out);
-int ul_serialize_attitude(const ul_attitude_t *msg, uint8_t *out);
-int ul_serialize_gps_raw(const ul_gps_raw_t *msg, uint8_t *out);
-int ul_serialize_battery(const ul_battery_t *msg, uint8_t *out);
-int ul_serialize_rc_input(const ul_rc_input_t *msg, uint8_t *out);
+int ks_serialize_heartbeat(const ks_heartbeat_t *msg, uint8_t *out);
+int ks_serialize_attitude(const ks_attitude_t *msg, uint8_t *out);
+int ks_serialize_gps_raw(const ks_gps_raw_t *msg, uint8_t *out);
+int ks_serialize_battery(const ks_battery_t *msg, uint8_t *out);
+int ks_serialize_rc_input(const ks_rc_input_t *msg, uint8_t *out);
 ```
 
 **Serialization:**
@@ -788,16 +788,16 @@ int ul_serialize_rc_input(const ul_rc_input_t *msg, uint8_t *out);
 **Returns:**
 
 - Positive: Payload size (bytes)
-- `UL_ERR_NULL_POINTER` - Invalid pointer
+- `KS_ERR_NULL_POINTER` - Invalid pointer
 
 ### Message Deserialization
 
 ```c
-int ul_deserialize_heartbeat(ul_heartbeat_t *msg, const uint8_t *in);
-int ul_deserialize_attitude(ul_attitude_t *msg, const uint8_t *in);
-int ul_deserialize_gps_raw(ul_gps_raw_t *msg, const uint8_t *in);
-int ul_deserialize_battery(ul_battery_t *msg, const uint8_t *in);
-int ul_deserialize_rc_input(ul_rc_input_t *msg, const uint8_t *in);
+int ks_deserialize_heartbeat(ks_heartbeat_t *msg, const uint8_t *in);
+int ks_deserialize_attitude(ks_attitude_t *msg, const uint8_t *in);
+int ks_deserialize_gps_raw(ks_gps_raw_t *msg, const uint8_t *in);
+int ks_deserialize_battery(ks_battery_t *msg, const uint8_t *in);
+int ks_deserialize_rc_input(ks_rc_input_t *msg, const uint8_t *in);
 ```
 
 **Deserialization:**
@@ -810,20 +810,20 @@ int ul_deserialize_rc_input(ul_rc_input_t *msg, const uint8_t *in);
 **Returns:**
 
 - Positive: Bytes consumed
-- `UL_ERR_NULL_POINTER` - Invalid pointer
+- `KS_ERR_NULL_POINTER` - Invalid pointer
 
 ### Error Codes
 
 ```c
 typedef enum {
-    UL_OK = 0,                // Success
-    UL_ERR_NULL_POINTER,      // NULL pointer argument
-    UL_ERR_BUFFER_OVERFLOW,   // Payload exceeds max size
-    UL_ERR_CRC,               // CRC checksum failed
-    UL_ERR_MAC_VERIFICATION,  // AEAD MAC authentication failed
-    UL_ERR_NO_KEY,            // Encrypted packet but no key
-    UL_ERR_INVALID_PACKET     // Malformed packet
-} ul_error_t;
+    KS_OK = 0,                // Success
+    KS_ERR_NULL_POINTER,      // NULL pointer argument
+    KS_ERR_BUFFER_OVERFLOW,   // Payload exceeds max size
+    KS_ERR_CRC,               // CRC checksum failed
+    KS_ERR_MAC_VERIFICATION,  // AEAD MAC authentication failed
+    KS_ERR_NO_KEY,            // Encrypted packet but no key
+    KS_ERR_INVALID_PACKET     // Malformed packet
+} ks_error_t;
 ```
 
 ---
@@ -854,13 +854,13 @@ The protocol now features production-grade authenticated encryption:
    - Prevents both ciphertext and header tampering
 
 2. **Comprehensive Error Handling**
-   - Added `ul_error_t` enum with 7 distinct error codes
-   - `UL_ERR_MAC_VERIFICATION` specifically identifies authentication failures
+   - Added `ks_error_t` enum with 7 distinct error codes
+   - `KS_ERR_MAC_VERIFICATION` specifically identifies authentication failures
    - All error paths properly clean up parser state
 
 3. **Defensive Programming**
    - NULL pointer checks on all 20+ public API functions
-   - Buffer overflow protection with `UL_MAX_PAYLOAD_SIZE` constant
+   - Buffer overflow protection with `KS_MAX_PAYLOAD_SIZE` constant
    - Payload size validation in both packer and parser
 
 4. **AEAD Technical Details**
@@ -901,7 +901,7 @@ The protocol now features production-grade authenticated encryption:
      ```c
      typedef struct {
          uint8_t sys_id;
-         ul_nonce_state_t nonce_state;
+         ks_nonce_state_t nonce_state;
          uint16_t last_sequence;
      } vehicle_context_t;
      ```
@@ -910,7 +910,7 @@ The protocol now features production-grade authenticated encryption:
 
 ## Test Suite
 
-UAVLink includes a comprehensive unit test suite with **33 tests** achieving **100% pass rate**, validating all protocol functionality.
+Kestrel Core includes a comprehensive unit test suite with **33 tests** achieving **100% pass rate**, validating all protocol functionality.
 
 ### Running Tests
 
@@ -993,7 +993,7 @@ make test
 During test development, several critical bugs were discovered and fixed:
 
 1. **AEAD Parameter Swap** - `crypto_aead_lock()` had MAC and ciphertext outputs reversed
-2. **Parser API Ambiguity** - Return value conflict between `UL_OK` (0) and "keep parsing" state
+2. **Parser API Ambiguity** - Return value conflict between `KS_OK` (0) and "keep parsing" state
 3. **Zero-Length Payload** - Parser stuck in PAYLOAD state for empty messages
 
 All issues resolved with production code fixes validated by the test suite.
@@ -1008,42 +1008,42 @@ All issues resolved with production code fixes validated by the test suite.
 
 ### Step 1: Define Message ID and Structure
 
-In `uavlink.h`:
+In `kestrel.h`:
 
 ```c
 // Add message ID
-#define UL_MSG_YOUR_MESSAGE  0x006
+#define KS_MSG_YOUR_MESSAGE  0x006
 
 // Define message structure
 typedef struct {
     uint32_t timestamp;    // System time (milliseconds)
     float temperature;     // Temperature (°C)
     uint8_t status;        // Status flags
-} ul_your_message_t;
+} ks_your_message_t;
 ```
 
 ### Step 2: Declare Serialization Functions
 
-In `uavlink.h`:
+In `kestrel.h`:
 
 ```c
-int ul_serialize_your_message(const ul_your_message_t *msg, uint8_t *out);
-int ul_deserialize_your_message(ul_your_message_t *msg, const uint8_t *in);
+int ks_serialize_your_message(const ks_your_message_t *msg, uint8_t *out);
+int ks_deserialize_your_message(ks_your_message_t *msg, const uint8_t *in);
 ```
 
 ### Step 3: Add CRC Seed
 
-In `uavlink.c`, update `ul_get_crc_seed()`:
+In `kestrel.c`, update `ks_get_crc_seed()`:
 
 ```c
-static uint8_t ul_get_crc_seed(uint16_t msg_id) {
+static uint8_t ks_get_crc_seed(uint16_t msg_id) {
     switch (msg_id) {
-    case UL_MSG_HEARTBEAT:    return 50;
-    case UL_MSG_ATTITUDE:     return 39;
-    case UL_MSG_GPS_RAW:      return 24;
-    case UL_MSG_BATTERY:      return 154;
-    case UL_MSG_RC_INPUT:     return 89;
-    case UL_MSG_YOUR_MESSAGE: return 123;  // Pick random unique value
+    case KS_MSG_HEARTBEAT:    return 50;
+    case KS_MSG_ATTITUDE:     return 39;
+    case KS_MSG_GPS_RAW:      return 24;
+    case KS_MSG_BATTERY:      return 154;
+    case KS_MSG_RC_INPUT:     return 89;
+    case KS_MSG_YOUR_MESSAGE: return 123;  // Pick random unique value
     default: return 0;
     }
 }
@@ -1051,11 +1051,11 @@ static uint8_t ul_get_crc_seed(uint16_t msg_id) {
 
 ### Step 4: Implement Serialization
 
-In `uavlink.c`:
+In `kestrel.c`:
 
 ```c
-int ul_serialize_your_message(const ul_your_message_t *msg, uint8_t *out) {
-    if (!msg || !out) return UL_ERR_NULL_POINTER;
+int ks_serialize_your_message(const ks_your_message_t *msg, uint8_t *out) {
+    if (!msg || !out) return KS_ERR_NULL_POINTER;
 
     int offset = 0;
 
@@ -1074,11 +1074,11 @@ int ul_serialize_your_message(const ul_your_message_t *msg, uint8_t *out) {
 
 ### Step 5: Implement Deserialization
 
-In `uavlink.c`:
+In `kestrel.c`:
 
 ```c
-int ul_deserialize_your_message(ul_your_message_t *msg, const uint8_t *in) {
-    if (!msg || !in) return UL_ERR_NULL_POINTER;
+int ks_deserialize_your_message(ks_your_message_t *msg, const uint8_t *in) {
+    if (!msg || !in) return KS_ERR_NULL_POINTER;
 
     int offset = 0;
 
@@ -1100,17 +1100,17 @@ int ul_deserialize_your_message(ul_your_message_t *msg, const uint8_t *in) {
 Always test serialization/deserialization for round-trip accuracy:
 
 ```c
-ul_your_message_t original = {
+ks_your_message_t original = {
     .timestamp = 123456,
     .temperature = 25.5f,
     .status = 0x42
 };
 
 uint8_t buffer[32];
-int size = ul_serialize_your_message(&original, buffer);
+int size = ks_serialize_your_message(&original, buffer);
 
-ul_your_message_t decoded;
-ul_deserialize_your_message(&decoded, buffer);
+ks_your_message_t decoded;
+ks_deserialize_your_message(&decoded, buffer);
 
 assert(decoded.timestamp == original.timestamp);
 assert(fabs(decoded.temperature - original.temperature) < 0.001f);
@@ -1205,7 +1205,7 @@ Contributions welcome! Areas of interest:
 
 This project includes:
 
-- **UAVLink Protocol:** MIT License
+- **Kestrel Protocol (reference implementation):** MIT License
 - **Monocypher:** Dual-licensed BSD-2-Clause OR CC0-1.0 (public domain)
 
 See LICENSE file for details.

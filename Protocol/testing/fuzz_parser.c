@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include "../uavlink.h"
+#include "../kestrel.h"
 
 // Provide a dummy key for testing the decryption path
 static const uint8_t DUMMY_KEY[32] = {
@@ -17,12 +17,12 @@ static const uint8_t DUMMY_KEY[32] = {
 int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
     if (Size == 0) return 0;
 
-    ul_parser_t parser;
-    ul_parser_init(&parser);
+    ks_parser_t parser;
+    ks_parser_init(&parser);
 
     // Feed the random fuzzing data into the parser byte by byte
     for (size_t i = 0; i < Size; i++) {
-        ul_parse_char(&parser, Data[i], DUMMY_KEY);
+        ks_parse_char(&parser, Data[i], DUMMY_KEY);
     }
 
     return 0; // Always return 0
@@ -35,8 +35,8 @@ int main(int argc, char **argv) {
     srand(time(NULL));
     
     uint8_t random_buffer[1024];
-    ul_parser_t parser;
-    ul_parser_init(&parser);
+    ks_parser_t parser;
+    ks_parser_init(&parser);
     
     long iterations = 1000000;
     if (argc > 1) {
@@ -52,9 +52,9 @@ int main(int argc, char **argv) {
         }
         
         // Feed into parser
-        ul_parser_init(&parser);
+        ks_parser_init(&parser);
         for (size_t i = 0; i < size; i++) {
-            ul_parse_char(&parser, random_buffer[i], DUMMY_KEY);
+            ks_parse_char(&parser, random_buffer[i], DUMMY_KEY);
         }
         
         if (iter % 100000 == 0) {

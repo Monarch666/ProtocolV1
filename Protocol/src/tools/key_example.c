@@ -1,13 +1,13 @@
 /*
- * UAVLink Key Management Example
+ * Kestrel Key Management Example
  *
- * Demonstrates secure key loading and usage with UAVLink protocol.
+ * Demonstrates secure key loading and usage with Kestrel protocol.
  * This replaces hardcoded keys with file-based key management.
  */
 
-#include "uavlink.h"
-#include "uavlink_fast.h"
-#include "uavlink_keymanager.h"
+#include "kestrel.h"
+#include "kestrel_fast.h"
+#include "kestrel_keymanager.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,14 +19,14 @@
 // Print key loading status
 static void print_key_status(int result, const char *method)
 {
-    if (result == UL_KEY_OK)
+    if (result == KS_KEY_OK)
     {
         printf("✓ Key loaded successfully via %s\n", method);
     }
     else
     {
         printf("✗ Key loading failed via %s: %s\n",
-               method, ul_key_error_string(result));
+               method, ks_key_error_string(result));
     }
 }
 
@@ -36,22 +36,22 @@ static int example_binary_file(void)
     printf("\n=== Example 1: Loading Key from Binary File ===\n");
 
     uint8_t key[32];
-    int result = ul_load_key_from_file("example_key.bin", key, true);
+    int result = ks_load_key_from_file("example_key.bin", key, true);
     print_key_status(result, "binary file");
 
-    if (result == UL_KEY_OK)
+    if (result == KS_KEY_OK)
     {
         // Create session from loaded key
-        ul_session_t session;
-        if (ul_session_init(&session, key) != 0)
+        ks_session_t session;
+        if (ks_session_init(&session, key) != 0)
         {
             printf("✗ Failed to initialize session from loaded key\n");
-            ul_secure_zero(key, 32);
-            return UL_KEY_ERR_FORMAT;
+            ks_secure_zero(key, 32);
+            return KS_KEY_ERR_FORMAT;
         }
 
         // Use session for encryption
-        ul_attitude_t att = {
+        ks_attitude_t att = {
             .roll = 0.1f,
             .pitch = 0.2f,
             .yaw = 1.5f,
@@ -60,21 +60,21 @@ static int example_binary_file(void)
             .yawspeed = 0.0f};
 
         uint8_t payload[32];
-        int payload_len = ul_serialize_attitude(&att, payload);
+        int payload_len = ks_serialize_attitude(&att, payload);
 
-        ul_header_t header = {
+        ks_header_t header = {
             .payload_len = payload_len,
-            .priority = UL_PRIO_NORMAL,
-            .stream_type = UL_STREAM_TELEM_FAST,
+            .priority = KS_PRIO_NORMAL,
+            .stream_type = KS_STREAM_TELEM_FAST,
             .encrypted = true,
             .sequence = 1,
             .sys_id = 1,
             .comp_id = 0,
             .target_sys_id = 0,
-            .msg_id = UL_MSG_ATTITUDE};
+            .msg_id = KS_MSG_ATTITUDE};
 
         uint8_t packet[256];
-        int packet_len = uavlink_pack_with_nonce(packet, &header, payload, &session);
+        int packet_len = kestrel_pack_with_nonce(packet, &header, payload, &session);
 
         if (packet_len > 0)
         {
@@ -82,8 +82,8 @@ static int example_binary_file(void)
         }
 
         // Clear key and session from memory
-        ul_secure_zero(key, 32);
-        ul_session_destroy(&session);
+        ks_secure_zero(key, 32);
+        ks_session_destroy(&session);
     }
 
     return result;
@@ -95,10 +95,10 @@ static int example_hex_file(void)
     printf("\n=== Example 2: Loading Key from Hex File ===\n");
 
     uint8_t key[32];
-    int result = ul_load_key_from_hex_file("example_key.txt", key);
+    int result = ks_load_key_from_hex_file("example_key.txt", key);
     print_key_status(result, "hex file");
 
-    if (result == UL_KEY_OK)
+    if (result == KS_KEY_OK)
     {
         printf("  Key (first 8 bytes): ");
         for (int i = 0; i < 8; i++)
@@ -107,7 +107,7 @@ static int example_hex_file(void)
         }
         printf("\n");
 
-        ul_secure_zero(key, 32);
+        ks_secure_zero(key, 32);
     }
 
     return result;
@@ -117,16 +117,16 @@ static int example_hex_file(void)
 static int example_environment(void)
 {
     printf("\n=== Example 3: Loading Key from Environment Variable ===\n");
-    printf("  Set UAVLINK_KEY environment variable first\n");
-    printf("  Example: export UAVLINK_KEY=\"a1b2c3d4...\"\n");
+    printf("  Set KESTREL_KEY environment variable first\n");
+    printf("  Example: export KESTREL_KEY=\"a1b2c3d4...\"\n");
 
     uint8_t key[32];
-    int result = ul_load_key_from_env("UAVLINK_KEY", key, UL_KEY_FORMAT_HEX);
+    int result = ks_load_key_from_env("KESTREL_KEY", key, KS_KEY_FORMAT_HEX);
     print_key_status(result, "environment variable");
 
-    if (result == UL_KEY_OK)
+    if (result == KS_KEY_OK)
     {
-        ul_secure_zero(key, 32);
+        ks_secure_zero(key, 32);
     }
 
     return result;
@@ -141,7 +141,7 @@ static void example_generate_key(void)
 
     // Generate key (weak - for demonstration only!)
     uint8_t key[32];
-    ul_generate_random_key(key);
+    ks_generate_random_key(key);
 
     // Save to file
     FILE *f = fopen("example_key_generated.bin", "wb");
@@ -162,7 +162,7 @@ static void example_generate_key(void)
         printf("✗ Failed to save key\n");
     }
 
-    ul_secure_zero(key, 32);
+    ks_secure_zero(key, 32);
 }
 
 // Example 5: Practical usage in UAV/GCS application
@@ -176,32 +176,32 @@ static void example_practical_usage(void)
     // Try multiple key sources in order of preference
 
     // 1. Try environment variable (for container deployments)
-    result = ul_load_key_from_env("UAVLINK_KEY", encryption_key, UL_KEY_FORMAT_HEX);
-    if (result == UL_KEY_OK)
+    result = ks_load_key_from_env("KESTREL_KEY", encryption_key, KS_KEY_FORMAT_HEX);
+    if (result == KS_KEY_OK)
     {
         printf("✓ Using key from environment variable\n");
         goto key_loaded;
     }
 
     // 2. Try user's secure key directory
-    result = ul_load_key_from_file("~/.uavlink/keys/default.bin", encryption_key, true);
-    if (result == UL_KEY_OK)
+    result = ks_load_key_from_file("~/.kestrel/keys/default.bin", encryption_key, true);
+    if (result == KS_KEY_OK)
     {
         printf("✓ Using key from user directory\n");
         goto key_loaded;
     }
 
     // 3. Try system-wide key (Unix)
-    result = ul_load_key_from_file("/etc/uavlink/key.bin", encryption_key, true);
-    if (result == UL_KEY_OK)
+    result = ks_load_key_from_file("/etc/kestrel/key.bin", encryption_key, true);
+    if (result == KS_KEY_OK)
     {
         printf("✓ Using key from system directory\n");
         goto key_loaded;
     }
 
     // 4. Try current directory (development)
-    result = ul_load_key_from_file("uavlink_key.bin", encryption_key, false);
-    if (result == UL_KEY_OK)
+    result = ks_load_key_from_file("kestrel_key.bin", encryption_key, false);
+    if (result == KS_KEY_OK)
     {
         printf("✓ Using key from current directory\n");
         goto key_loaded;
@@ -209,23 +209,23 @@ static void example_practical_usage(void)
 
     // No key found
     printf("✗ No encryption key found!\n");
-    printf("  Please generate a key with: python keygen.py --save uavlink_key.bin\n");
+    printf("  Please generate a key with: python keygen.py --save kestrel_key.bin\n");
     return;
 
 key_loaded:
     printf("\n  Application can now use encryption_key for all operations\n");
-    printf("  Remember to call ul_secure_zero() before exiting\n");
+    printf("  Remember to call ks_secure_zero() before exiting\n");
 
     // In real application, use key here...
 
     // Clean up
-    ul_secure_zero(encryption_key, 32);
+    ks_secure_zero(encryption_key, 32);
 }
 
 int main(int argc, char *argv[])
 {
     printf("╔═══════════════════════════════════════════════════════════╗\n");
-    printf("║  UAVLink Key Management Examples                          ║\n");
+    printf("║  Kestrel Key Management Examples                          ║\n");
     printf("╚═══════════════════════════════════════════════════════════╝\n");
 
     // Generate example keys for demonstration
@@ -273,7 +273,7 @@ int main(int argc, char *argv[])
     printf("  • Use keygen.py to generate cryptographically secure keys\n");
     printf("  • Store keys with restrictive permissions (chmod 600)\n");
     printf("  • Use unique keys per UAV-GCS pair\n");
-    printf("  • Clear keys from memory with ul_secure_zero()\n");
+    printf("  • Clear keys from memory with ks_secure_zero()\n");
     printf("  • Use ECDH session keys for production systems\n");
     printf("\n");
     printf("✗ DON'T:\n");

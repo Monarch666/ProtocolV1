@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UAVLink 15-Minute Internal Integration Test
+Kestrel 15-Minute Internal Integration Test
 Launches GCS Receiver + UAV Simulator, monitors output for errors and
 key metrics, then produces a test report.
 """
@@ -53,7 +53,7 @@ _PAT_GCS_RECV       = re.compile(r"\[CMD #|Received|packets_received")
 _PAT_ECDH           = re.compile(r"ECDH.*Established|session key established|ESTABLISHED", re.IGNORECASE)
 _PAT_REPLAY         = re.compile(r"Replay attack detected|SECURITY.*Replay", re.IGNORECASE)
 _PAT_AUTH_FAIL      = re.compile(r"Authentication failed|MAC.*fail|auth_result.*-1", re.IGNORECASE)
-_PAT_CRC            = re.compile(r"CRC.*error|UL_ERR_CRC", re.IGNORECASE)
+_PAT_CRC            = re.compile(r"CRC.*error|KS_ERR_CRC", re.IGNORECASE)
 _PAT_CRASH          = re.compile(r"segfault|access violation|exception|FATAL|killed", re.IGNORECASE)
 
 def read_stream(proc, name: str, lines: list):
@@ -103,7 +103,7 @@ def print_progress(start: float, duration: float):
 
 def main():
     print("=" * 65)
-    print("  UAVLink 15-Minute Internal Integration Test")
+    print("  Kestrel 15-Minute Internal Integration Test")
     print(f"  Start time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
 
@@ -202,7 +202,7 @@ def main():
 
     print()
     print("=" * 65)
-    print("  UAVLink Integration Test Complete.")
+    print("  Kestrel Integration Test Complete.")
     print("=" * 65)
 
 

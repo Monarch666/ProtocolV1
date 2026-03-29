@@ -26,7 +26,7 @@ delayed_packets = []
 lock = threading.Lock()
 
 def chaotic_forwarder():
-    print(f"--- UAVLink Network Chaos Proxy Starting ---")
+    print(f"--- Kestrel Network Chaos Proxy Starting ---")
     print(f"Intercepting Telemetry on {IP_ADDR}:{PROXY_TELEM_PORT} -> Forwarding to {IP_ADDR}:{GCS_REAL_TELEM_PORT}")
     print(f"Intercepting Commands  on {IP_ADDR}:{PROXY_CMD_PORT} -> Forwarding to {IP_ADDR}:{UAV_REAL_CMD_PORT}")
     print(f"Parameters: {DROP_PROBABILITY*100}% Drop | {DUP_PROBABILITY*100}% Duplicate | Latency {LATENCY_MIN_MS}-{LATENCY_MAX_MS} ms")
@@ -69,7 +69,7 @@ def chaotic_forwarder():
                 # [6-7] comp/msg (MSG_ID is low 12 bits)
                 msg_id = ((data[6] & 0x0F) << 8) | data[7]
                 
-                if msg_id == 0x00A: # UL_MSG_KEY_EXCHANGE
+                if msg_id == 0x00A: # KS_MSG_KEY_EXCHANGE
                     print("  [MITM] Intercepted KEY_EXCHANGE packet! Injecting malicious ECDH key...")
                     # The payload follows the header.
                     # For KEY_EXCHANGE, header is usually 9 bytes (base + seq/sys + comp/msg + target_sys).

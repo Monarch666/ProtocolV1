@@ -15,7 +15,7 @@ UAV_REAL_CMD_PORT = 14553
 IP_ADDR = "127.0.0.1"
 
 def clean_forwarder():
-    print(f"--- UAVLink Clean Forwarding Proxy Starting ---")
+    print(f"--- Kestrel Clean Forwarding Proxy Starting ---")
     print(f"Intercepting Telemetry on {IP_ADDR}:{PROXY_TELEM_PORT} -> Forwarding to {IP_ADDR}:{GCS_REAL_TELEM_PORT}")
     print(f"Intercepting Commands  on {IP_ADDR}:{PROXY_CMD_PORT} -> Forwarding to {IP_ADDR}:{UAV_REAL_CMD_PORT}")
     print("Zero packet loss, zero latency, NO MITM attack.")
