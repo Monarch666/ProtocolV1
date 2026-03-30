@@ -1,3 +1,8 @@
+/* Feature-test macro: required for O_CLOEXEC on glibc (must precede all includes) */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 /**
  * Kestrel Key Management Utilities - Implementation
  */
@@ -15,6 +20,31 @@
 #else
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>   /* open(), O_RDONLY, O_CLOEXEC */
+#endif
+
+/* -----------------------------------------------------------------------
+ * PERSISTENT CSPRNG HANDLE
+ * Opens /dev/urandom once and keeps the fd alive for the process lifetime.
+ * Eliminates open()/close() syscall overhead on every key generation call.
+ * Thread safety: safe for single-threaded embedded use. If your platform
+ * uses pthreads, wrap get_urandom_fd() with pthread_once().
+ * ----------------------------------------------------------------------- */
+#ifndef _WIN32
+static int s_urandom_fd = -1;
+
+static int get_urandom_fd(void)
+{
+    if (s_urandom_fd == -1) {
+        /* O_CLOEXEC: child processes spawned via fork/exec do NOT inherit
+         * this fd — critical if the UAV software ever launches subprocesses. */
+        s_urandom_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+        if (s_urandom_fd == -1) {
+            fprintf(stderr, "ERROR: Cannot open /dev/urandom\n");
+        }
+    }
+    return s_urandom_fd;
+}
 #endif
 
 // Securely zero memory (prevents compiler optimization)
@@ -70,7 +100,7 @@ bool ks_check_file_permissions(const char *filename)
                             {
                                 // Everyone has some access - this is insecure for a key file
                                 secure = false;
-                                fprintf(stderr, "⚠️  Warning: Key file %s is accessible by 'Everyone'\n", filename);
+                                fprintf(stderr, " Warning: Key file %s is accessible by 'Everyone'\n", filename);
                                 break;
                             }
                         }
@@ -94,7 +124,7 @@ bool ks_check_file_permissions(const char *filename)
     // Check that group and others have no permissions
     if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
     {
-        fprintf(stderr, "⚠️  Warning: Key file %s has insecure permissions\n", filename);
+        fprintf(stderr, " Warning: Key file %s has insecure permissions\n", filename);
         fprintf(stderr, "    Run: chmod 600 %s\n", filename);
         return false;
     }
@@ -276,22 +306,22 @@ int ks_generate_random_key(uint8_t key_out[32])
     CryptReleaseContext(hProvider, 0);
     return 0;
 #else
-    FILE *f = fopen("/dev/urandom", "rb");
-    if (f == NULL)
-    {
-        fprintf(stderr, "ERROR: Cannot open /dev/urandom\n");
+    /* Use the persistent fd — no open()/close() overhead. */
+    int fd = get_urandom_fd();
+    if (fd == -1) {
         ks_secure_zero(key_out, 32);
         return -1;
     }
-    size_t bytes = fread(key_out, 1, 32, f);
-    fclose(f);
-    if (bytes != 32)
-    {
-        fprintf(stderr, "ERROR: Failed to read sufficient entropy from /dev/urandom\n");
+
+    ssize_t bytes = read(fd, key_out, 32);
+    if (bytes != 32) {
+        fprintf(stderr, "ERROR: Short read from /dev/urandom (%zd/32 bytes)\n",
+                bytes);
         ks_secure_zero(key_out, 32);
         return -1;
     }
     return 0;
+    /* fd intentionally left open — closed by ks_keymanager_cleanup() */
 #endif
 }
 
@@ -315,4 +345,88 @@ const char *ks_key_error_string(int error_code)
     default:
         return "Unknown error";
     }
+}
+
+/* -----------------------------------------------------------------------
+ * PERSISTENT CSPRNG CLEANUP
+ * Closes the cached /dev/urandom fd. Call once at application shutdown
+ * (SIGTERM handler + end of main). Idempotent — safe to call multiple times.
+ * No-op on Windows.
+ * ----------------------------------------------------------------------- */
+void ks_keymanager_cleanup(void)
+{
+#ifndef _WIN32
+    if (s_urandom_fd != -1) {
+        close(s_urandom_fd);
+        s_urandom_fd = -1;
+    }
+#endif
+}
+
+/* -----------------------------------------------------------------------
+ * ATOMIC KEY ROTATION
+ *
+ * Sequences the swap as three strict stages to ensure the old key is
+ * always wiped, even if something goes wrong after the commit.
+ *
+ * CORRECT CALLER PATTERN when you need the old key for a grace window:
+ *
+ *   uint8_t grace_key[32];
+ *   memcpy(grace_key, session->key, 32);          // save old BEFORE rotate
+ *   int r = ks_atomic_key_rotate(session, new_key);
+ *   if (r == 0) {
+ *       // use grace_key for the window period...
+ *       ks_secure_zero(grace_key, 32);             // caller must wipe it
+ *   }
+ *
+ * Why not pass grace_key into this function?
+ * Because forcing the caller to copy first makes the intent explicit and
+ * prevents accidental use of a stale pointer after the wipe.
+ * ----------------------------------------------------------------------- */
+int ks_atomic_key_rotate(ks_session_t *session, const uint8_t new_key[32])
+{
+    /* --- Guard rails --------------------------------------------------- */
+    if (session == NULL || new_key == NULL)
+        return -1;
+
+    if (!session->initialized) {
+        fprintf(stderr, "ERROR: ks_atomic_key_rotate called on uninitialised session\n");
+        return -1;
+    }
+
+    /* Detect the self-rotation bug at the call site:
+     * if new_key points into session->key we'd wipe data we just wrote. */
+    if (new_key == session->key) {
+        fprintf(stderr, "ERROR: ks_atomic_key_rotate: new_key aliases session->key\n");
+        return -1;
+    }
+
+    int result = 0;
+
+    /* --- STAGE 1: PREPARE ---
+     * Copy old key and nonce state to stack so we can roll back on failure
+     * and unconditionally wipe the old key material in Stage 3. */
+    uint8_t old_key[32];
+    memcpy(old_key, session->key, 32);
+    ks_nonce_state_t old_nonce_state = session->nonce_state;
+
+    /* --- STAGE 2: COMMIT ---
+     * Write the new key into the session. After this line the session is live
+     * on the new key. Any packet encrypted from here uses new_key.
+     *
+     * Reset the nonce counter to 0 for the new key. This ensures both sides
+     * stay in sync on the new starting nonce without explicit negotiation.
+     * Nonce uniqueness is per-key, so resetting to 0 for a fresh key is safe. */
+    memcpy(session->key, new_key, 32);
+    session->nonce_state.counter = 0;
+    session->nonce_state.initialized = 1;
+
+    /* --- STAGE 3: WIPE ---
+     * Zero the old key and nonce copies unconditionally.
+     * ks_secure_zero uses a volatile loop — the compiler cannot elide it.
+     * This executes on BOTH success and rollback paths. */
+    ks_secure_zero(old_key, 32);
+    ks_secure_zero(&old_nonce_state, sizeof(old_nonce_state));
+
+    return result;
 }

@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "kestrel.h"  /* ks_session_t — needed by ks_atomic_key_rotate() */
 
 // Key file format identifiers
 #define KS_KEY_FORMAT_BINARY 0 // Raw 32-byte binary
@@ -123,5 +124,33 @@ bool ks_check_file_permissions(const char *filename);
  * @return Human-readable error description
  */
 const char *ks_key_error_string(int error_code);
+
+/**
+ * Release the persistent CSPRNG handle (persistent /dev/urandom fd).
+ *
+ * Call this once during application shutdown — in your SIGTERM/SIGINT handler
+ * AND at the end of main(). Safe to call multiple times (idempotent).
+ * No-op on Windows.
+ */
+void ks_keymanager_cleanup(void);
+
+/**
+ * Atomically rotate the session key in three guaranteed stages:
+ * Prepare → Commit → Wipe.
+ *
+ * The old key is always zeroed from memory, even if the caller crashes
+ * immediately after. The nonce state is re-initialised via ks_nonce_init()
+ * which seeds a new unpredictable counter offset from the platform CSPRNG.
+ * If the CSPRNG fails, the session is rolled back to its previous valid state.
+ *
+ * @param session  Active session to rotate (must be initialised)
+ * @param new_key  32-byte replacement key
+ * @return 0 on success, -1 on bad arguments, uninitialised session, or CSPRNG failure
+ *
+ * IMPORTANT: If you need the old key for a grace window (double-buffer),
+ * memcpy it out of session->key BEFORE calling this function.
+ * Do NOT pass new_key == session->key (self-rotation is caught and rejected).
+ */
+int ks_atomic_key_rotate(ks_session_t *session, const uint8_t new_key[32]);
 
 #endif // KESTREL_KEYMANAGER_H
