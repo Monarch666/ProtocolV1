@@ -1,35 +1,35 @@
-# Kestrel Protocol (formerly Kestrel)
+# Kestrel  
 
-Kestrel is a high-performance binary communication protocol purpose-built for UAV systems. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. The reference implementation in this repository is provided under the historical `kestrel.*` filenames. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
+**Kestrel** is a high-performance **binary communication protocol** purpose-built for **UAV systems**. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. The reference implementation in this repository is provided under the historical `kestrel.*` filenames. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
 
-**Current Version:** 1.0 (March 2026)
+**Current Version:** 1.2.8 (March 2026)
 
-### ✨ Key Achievements
+### Ô£¿ Key Achievements
 
-- ✅ **Full ChaCha20-Poly1305 AEAD Encryption** - Complete implementation with 128-bit MAC authentication
-- ✅ **ARM NEON Hardware Acceleration** - 4x crypto speedup on ARM platforms with SIMD
-- ✅ **Phase 2 Optimizations** - Zero-copy parser (2x faster) + O(1) memory pool
-- ✅ **Phase 3 Advanced Features** - Delta encoding (57% bandwidth savings), LZ4 compression, Reed-Solomon FEC
-- ✅ **ECDH Handshake Hardening** - OS CSPRNG for ephemeral X25519 keys and BLAKE2b-bound signatures with protocol label
-- ✅ **82.8% Bandwidth Reduction** - Combined optimizations reduce telemetry from 3.68 kbps to 0.63 kbps
-- ✅ **Comprehensive Test Suite** - 33 tests across 10 categories with 100% pass rate
-- ✅ **Production-Ready Code** - All critical bugs identified and fixed through rigorous testing
-- ✅ **5 Message Types Implemented** - Heartbeat, Attitude, GPS, Battery, RC Input
-- ✅ **Robust Parser** - Byte-by-byte state machine with full error handling
-- ✅ **Secure Nonce Management** - Cryptographically secure nonce generation prevents replay attacks
-- ✅ **Fragmentation Support** - Handle payloads up to 4095 bytes with built-in fragmentation
+- Ô£à **Full ChaCha20-Poly1305 AEAD Encryption** - Complete implementation with 128-bit MAC authentication
+- Ô£à **ARM NEON Hardware Acceleration** - 4x crypto speedup on ARM platforms with SIMD
+- Ô£à **Phase 2 Optimizations** - Zero-copy parser (2x faster) + O(1) memory pool
+- Ô£à **Phase 3 Advanced Features** - Delta encoding (57% bandwidth savings), LZ4 compression, Reed-Solomon FEC
+- Ô£à **ECDH Handshake Hardening** - OS CSPRNG for ephemeral X25519 keys and BLAKE2b-bound signatures with protocol label
+- Ô£à **82.8% Bandwidth Reduction** - Combined optimizations reduce telemetry from 3.68 kbps to 0.63 kbps
+- Ô£à **Comprehensive Test Suite** - 33 tests across 10 categories with 100% pass rate
+- Ô£à **Production-Ready Code** - All critical bugs identified and fixed through rigorous testing
+- Ô£à **5 Message Types Implemented** - Heartbeat, Attitude, GPS, Battery, RC Input
+- Ô£à **Robust Parser** - Byte-by-byte state machine with full error handling
+- Ô£à **Secure Nonce Management** - Cryptographically secure nonce generation prevents replay attacks
+- Ô£à **Fragmentation Support** - Handle payloads up to 4095 bytes with built-in fragmentation
 
-### 🚀 Performance Summary
+### ­ƒÜÇ Performance Summary
 
 | Metric            | Baseline  | Optimized | Improvement                |
 | ----------------- | --------- | --------- | -------------------------- |
 | **Bandwidth**     | 3.68 kbps | 0.63 kbps | **82.8% reduction**        |
-| **Parse Speed**   | 250 µs    | 125 µs    | **2x faster**              |
-| **Crypto Speed**  | 200 µs    | 50 µs     | **4x faster** (ARM NEON)   |
-| **Memory Alloc**  | 50 µs     | <1 µs     | **50x faster** (O(1) pool) |
-| **Total Latency** | 500 µs    | 176 µs    | **2.8x faster**            |
+| **Parse Speed**   | 250 ┬Ás    | 125 ┬Ás    | **2x faster**              |
+| **Crypto Speed**  | 200 ┬Ás    | 50 ┬Ás     | **4x faster** (ARM NEON)   |
+| **Memory Alloc**  | 50 ┬Ás     | <1 ┬Ás     | **50x faster** (O(1) pool) |
+| **Total Latency** | 500 ┬Ás    | 176 ┬Ás    | **2.8x faster**            |
 
-### 📊 Test Coverage
+### ­ƒôè Test Coverage
 
 **33 Tests | 100% Pass Rate**
 
@@ -54,30 +54,30 @@ Kestrel is a high-performance binary communication protocol purpose-built for UA
 
 ### Core Protocol
 
-✅ **Compact Headers** - 8-16 byte headers with bit-packed fields  
-✅ **Built-in Encryption** - ChaCha20-Poly1305 AEAD with full 128-bit MAC authentication  
-✅ **Reliable** - CRC-16 integrity checking plus AEAD MAC prevents tampering  
-✅ **Flexible Routing** - System/component addressing with broadcast support  
-✅ **Priority-based QoS** - 4 priority levels for time-critical messages  
-✅ **Stream-Parseable** - Byte-by-byte state machine ideal for UART  
-✅ **Fragmentation Support** - Handle payloads up to 4095 bytes  
-✅ **Production-Ready** - Secure nonce generation prevents replay attacks
+Ô£à **Compact Headers** - 8-16 byte headers with bit-packed fields  
+Ô£à **Built-in Encryption** - ChaCha20-Poly1305 AEAD with full 128-bit MAC authentication  
+Ô£à **Reliable** - CRC-16 integrity checking plus AEAD MAC prevents tampering  
+Ô£à **Flexible Routing** - System/component addressing with broadcast support  
+Ô£à **Priority-based QoS** - 4 priority levels for time-critical messages  
+Ô£à **Stream-Parseable** - Byte-by-byte state machine ideal for UART  
+Ô£à **Fragmentation Support** - Handle payloads up to 4095 bytes  
+Ô£à **Production-Ready** - Secure nonce generation prevents replay attacks
 
 ### Phase 2 Performance Optimizations
 
-✅ **Zero-Copy Parser** - 2x parsing speed with direct memory access  
-✅ **Memory Pool** - O(1) deterministic allocation for real-time systems  
-✅ **Hardware Crypto Detection** - Automatic SIMD backend selection  
-✅ **Crypto Context Caching** - 30% speedup for burst transmissions  
-✅ **Selective Encryption** - 60% bandwidth reduction for public telemetry
+Ô£à **Zero-Copy Parser** - 2x parsing speed with direct memory access  
+Ô£à **Memory Pool** - O(1) deterministic allocation for real-time systems  
+Ô£à **Hardware Crypto Detection** - Automatic SIMD backend selection  
+Ô£à **Crypto Context Caching** - 30% speedup for burst transmissions  
+Ô£à **Selective Encryption** - 60% bandwidth reduction for public telemetry
 
 ### Phase 3 Advanced Features
 
-✅ **Delta Encoding** - 57% bandwidth savings for GPS/attitude telemetry  
-✅ **LZ4 Compression** - Fast compression for repetitive data  
-✅ **Reed-Solomon FEC** - Recover from packet loss without retransmission  
-✅ **ARM NEON Acceleration** - 4x crypto speedup on ARM Cortex-A/Apple Silicon  
-✅ **x86 AVX2 Support** - 4x crypto speedup on modern Intel/AMD processors
+Ô£à **Delta Encoding** - 57% bandwidth savings for GPS/attitude telemetry  
+Ô£à **LZ4 Compression** - Fast compression for repetitive data  
+Ô£à **Reed-Solomon FEC** - Recover from packet loss without retransmission  
+Ô£à **ARM NEON Acceleration** - 4x crypto speedup on ARM Cortex-A/Apple Silicon  
+Ô£à **x86 AVX2 Support** - 4x crypto speedup on modern Intel/AMD processors
 
 ---
 
@@ -133,7 +133,7 @@ gcc -Wall -O2 -o kestrel_benchmark kestrel_benchmark.c kestrel.c \
 ./kestrel_benchmark
 ```
 
-**Option 2: Network Test (Localhost — Single PC)**
+**Option 2: Network Test (Localhost ÔÇö Single PC)**
 
 ```bash
 cd Protocol
@@ -183,14 +183,14 @@ gcc -Wall -O2 -o kestrel_test test.c kestrel.c kestrel_fast.c kestrel_compress.c
 ```
 Phase 2 vs Baseline:
   Parse speedup:    6.17x
-  Alloc time:       <1 µs avg (O(1) pool)
+  Alloc time:       <1 ┬Ás avg (O(1) pool)
 
 Phase 3 (Delta encoding):
   Delta packets:    12 bytes avg (57% reduction from 28 bytes)
 
 RECOMMENDATIONS:
-✓ Delta encoding saves ~57% for telemetry - USE for GPS/Attitude
-○ Software crypto only - Consider ARM/x86 SIMD build
+Ô£ô Delta encoding saves ~57% for telemetry - USE for GPS/Attitude
+Ôùï Software crypto only - Consider ARM/x86 SIMD build
 ```
 
 **Network Test (Two-PC WiFi Test):**
@@ -210,7 +210,7 @@ Avg parse time: 4 us/packet
 Memory pool peak usage: 1/32 buffers
 ```
 
-> ✅ Successfully tested over WiFi between two Windows PCs with zero packet loss and full AEAD encryption.
+> Ô£à Successfully tested over WiFi between two Windows PCs with zero packet loss and full AEAD encryption.
 
 ### Integrating into Your Code
 
@@ -331,10 +331,10 @@ To add Kestrel Core (implemented in the `kestrel.*` files) to your flight contro
 ### Packet Structure
 
 ```
-┌─────────────┐─────────────────┐──────────┐──────────┐────────┐
-│[Base Header]│[Extended Header]│ [Payload]│[MAC Tag*]│[CRC-16]│
-│   4 bytes   │  4-13 bytes     │ 0-4095 B │16 bytes* │ 2 bytes│
-└─────────────┘─────────────────┘──────────┘──────────┘────────┘
+ÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÉ
+Ôöé [Base Header] [Extended Header] [Payload] [MAC Tag*] [CRC-16]   Ôöé
+Ôöé    4 bytes      4-13 bytes      0-4095 B   16 bytes*  2 bytes   Ôöé
+ÔööÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿ
 * 16-byte Poly1305 MAC tag only present when encrypted flag is set
 ```
 
@@ -344,13 +344,13 @@ To add Kestrel Core (implemented in the `kestrel.*` files) to your flight contro
 - **Maximum:** 4,122 bytes (4095-byte payload + full headers)
 - **Typical:** 26-50 bytes (common telemetry messages)
 
-### Kestrel Frame – Byte-Level Breakdown
+### Kestrel Frame ÔÇô Byte-Level Breakdown
 
 ```
-┌─────┌────┌────┌────┌────┌────┌─────┌─────┌───────┌─────────┌───────┌─────┐
-│ STX │ B1 │ B2 │ B3 │ SYS│COMP│TGT_S│TGT_C│ NONCE │ PAYLOAD │  MAC  │ CRC │
-│     │    │    │    │    │    │     │     │(opt)  │         │ (opt) │     │
-└─────┘────┘────┘────┘────┘────┘─────┘─────┘───────┘─────────┘───────┘─────┘
+ÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÉ
+Ôöé STX Ôöé B1 Ôöé B2 Ôöé B3 Ôöé SYSÔöéCOMPÔöéTGT_SÔöéTGT_CÔöé NONCE Ôöé PAYLOAD Ôöé  MAC  Ôöé CRC Ôöé
+Ôöé     Ôöé    Ôöé    Ôöé    Ôöé    Ôöé    Ôöé     Ôöé     Ôöé(opt)  Ôöé         Ôöé (opt) Ôöé     Ôöé
+ÔööÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿÔöÇÔöÇÔöÇÔöÇÔöÇÔöÿ
   0xA5                    Extended Header      0-4095B    16B     2B
 ```
 
@@ -549,13 +549,13 @@ ks_serialize_attitude(&att, payload);
 
 ```c
 ks_gps_raw_t gps = {
-    .lat = 474977810,      // 47.4977810° (Seattle)
-    .lon = -1222093200,    // -122.2093200°
+    .lat = 474977810,      // 47.4977810┬░ (Seattle)
+    .lon = -1222093200,    // -122.2093200┬░
     .alt = 100000,         // 100m AMSL
     .eph = 150,            // 1.5m horizontal uncertainty
     .epv = 250,            // 2.5m vertical uncertainty
     .vel = 1500,           // 15 m/s ground speed
-    .cog = 9000,           // 90° course
+    .cog = 9000,           // 90┬░ course
     .fix_type = 3,         // 3D fix
     .satellites = 12
 };
@@ -603,7 +603,7 @@ ks_serialize_battery(&bat, payload);
 **Fields:**
 | Field | Type | Size | Description |
 |-------|------|------|-------------|
-| channels[8] | uint16[8] | 16 | RC channel values (1000-2000 µs) |
+| channels[8] | uint16[8] | 16 | RC channel values (1000-2000 ┬Ás) |
 | rssi | uint8 | 1 | Signal strength (0-100%) |
 | quality | uint8 | 1 | Link quality (0-100%) |
 
@@ -763,7 +763,7 @@ while (uart_available()) {
         }
     }
     else if (result == KS_ERR_MAC_VERIFICATION) {
-        printf("⚠️ Tampered packet detected!\n");
+        printf("ÔÜá´©Å Tampered packet detected!\n");
     }
 }
 ```
@@ -830,7 +830,7 @@ typedef enum {
 
 ## Security Considerations
 
-### ✅ Implemented Protections
+### Ô£à Implemented Protections
 
 1. **Full AEAD Encryption:** ChaCha20-Poly1305 with 128-bit MAC authentication
 2. **Header Authentication:** Entire packet header authenticated as Additional Data (AAD)
@@ -841,7 +841,7 @@ typedef enum {
 7. **NULL Safety:** All public APIs validate pointer arguments
 8. **Buffer Protection:** Payload size validation prevents buffer overflows
 
-### 🔒 Recent Security Enhancements (February 2026)
+### ­ƒöÆ Recent Security Enhancements (February 2026)
 
 **Full ChaCha20-Poly1305 AEAD Implementation:**
 
@@ -871,13 +871,13 @@ The protocol now features production-grade authenticated encryption:
 
 **Security Posture:**
 
-- ✅ No replay attacks (hybrid nonce strategy)
-- ✅ No tampering (AEAD MAC verification)
-- ✅ No bit-flip attacks (CRC-16 + Poly1305)
-- ✅ No buffer overflows (bounds checking)
-- ✅ No NULL dereferences (comprehensive validation)
+- Ô£à No replay attacks (hybrid nonce strategy)
+- Ô£à No tampering (AEAD MAC verification)
+- Ô£à No bit-flip attacks (CRC-16 + Poly1305)
+- Ô£à No buffer overflows (bounds checking)
+- Ô£à No NULL dereferences (comprehensive validation)
 
-### ⚠️ Production Recommendations
+### ÔÜá´©Å Production Recommendations
 
 1. **Key Management:**
    - Never hardcode keys in source code
@@ -961,7 +961,7 @@ make test
 8. **Replay Protection (5 tests)**
    - Basic sequence tracking
    - Duplicate sequence detection
-   - Sequence number rollover (4095 → 0)
+   - Sequence number rollover (4095 ÔåÆ 0)
    - Out-of-order packet handling
    - Encrypted packet replay prevention
 
@@ -980,12 +980,12 @@ make test
 ### Test Results
 
 ```
-╔═══════════════════════════════════════════════════════════╗
-║  Total Tests:  33                                         ║
-║  Passed:       33    ✓                                    ║
-║  Failed:       0     ✗                                    ║
-║  Success Rate: 100.0%                                     ║
-╚═══════════════════════════════════════════════════════════╝
+ÔòöÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòù
+Ôòæ  Total Tests:  33                                         Ôòæ
+Ôòæ  Passed:       33    Ô£ô                                    Ôòæ
+Ôòæ  Failed:       0     Ô£ù                                    Ôòæ
+Ôòæ  Success Rate: 100.0%                                     Ôòæ
+ÔòÜÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòÉÔòØ
 ```
 
 ### Bug Fixes from Testing
@@ -1017,7 +1017,7 @@ In `kestrel.h`:
 // Define message structure
 typedef struct {
     uint32_t timestamp;    // System time (milliseconds)
-    float temperature;     // Temperature (°C)
+    float temperature;     // Temperature (┬░C)
     uint8_t status;        // Status flags
 } ks_your_message_t;
 ```
@@ -1116,7 +1116,7 @@ assert(decoded.timestamp == original.timestamp);
 assert(fabs(decoded.temperature - original.temperature) < 0.001f);
 assert(decoded.status == original.status);
 
-printf("✓ Round-trip test passed!\n");
+printf("Ô£ô Round-trip test passed!\n");
 ```
 
 ## Performance Characteristics
@@ -1136,13 +1136,13 @@ printf("✓ Round-trip test passed!\n");
 
 - Payload: 12 bytes
 - Packet (encrypted): 12 + 34 = 46 bytes
-- Bandwidth: 46 × 10 = 460 bytes/sec = 3.68 kbps
+- Bandwidth: 46 ├ù 10 = 460 bytes/sec = 3.68 kbps
 
 **GPS @5Hz:**
 
 - Payload: 22 bytes
 - Packet (encrypted): 22 + 34 = 56 bytes
-- Bandwidth: 56 × 5 = 280 bytes/sec = 2.24 kbps
+- Bandwidth: 56 ├ù 5 = 280 bytes/sec = 2.24 kbps
 
 **Total typical telemetry:** ~10 kbps (comfortable for 57.6 kbps radio)
 
@@ -1150,11 +1150,11 @@ printf("✓ Round-trip test passed!\n");
 
 On ARM Cortex-M4 @168MHz:
 
-- Parse byte: ~5 µs
-- CRC-16: ~15 µs
-- ChaCha20-Poly1305 encrypt (12 bytes): ~200 µs
-- ChaCha20-Poly1305 decrypt+verify: ~220 µs
-- Total packet processing: ~250 µs
+- Parse byte: ~5 ┬Ás
+- CRC-16: ~15 ┬Ás
+- ChaCha20-Poly1305 encrypt (12 bytes): ~200 ┬Ás
+- ChaCha20-Poly1305 decrypt+verify: ~220 ┬Ás
+- Total packet processing: ~250 ┬Ás
 
 **Throughput:** ~4,000 packets/sec (sufficient for 100Hz telemetry)
 

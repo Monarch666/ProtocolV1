@@ -14,8 +14,8 @@ import os
 import signal
 
 # ---- Configuration ----
-DURATION_SECONDS = 60        # 1 minute
-BIN_DIR = os.path.join(os.path.dirname(__file__), "bin")
+DURATION_SECONDS = 900       # 15 minutes
+BIN_DIR = os.path.join(os.path.dirname(__file__), "..", "bin")
 EXT = ".exe" if os.name == "nt" else ""
 UAV_EXE = os.path.join(BIN_DIR, f"uav_simulator{EXT}")
 GCS_EXE = os.path.join(BIN_DIR, f"gcs_receiver{EXT}")

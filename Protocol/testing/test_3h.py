@@ -15,7 +15,7 @@ import signal
 
 # ---- Configuration ----
 DURATION_SECONDS = 10800      # 30 minutes
-BIN_DIR  = os.path.join(os.path.dirname(__file__), "bin")
+BIN_DIR  = os.path.join(os.path.dirname(__file__), "..", "bin")
 UAV_EXE  = os.path.join(BIN_DIR, "uav_simulator.exe")
 GCS_EXE  = os.path.join(BIN_DIR, "gcs_receiver.exe")
 REPORT   = os.path.join(os.path.dirname(__file__), "test_3h_report.txt")
