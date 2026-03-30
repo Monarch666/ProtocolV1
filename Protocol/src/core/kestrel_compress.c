@@ -430,10 +430,14 @@ int ks_delta_encode_gps(ks_delta_ctx_t *ctx, const ks_gps_raw_t *gps,
 
         ctx->prev_gps = *gps;
         g_phase3_stats.delta_encoded_packets++;
+<<<<<<<< HEAD:Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.c
+        g_phase3_stats.delta_bytes_saved += (sizeof(ks_gps_raw_t) - pos + 1);
+========
         /* BUG-11 FIX: Guard against uint32_t underflow when large deltas make the
            encoded output larger than the raw struct. Also removed the spurious +1. */
         if (sizeof(ks_gps_raw_t) > pos)
             g_phase3_stats.delta_bytes_saved += (uint32_t)(sizeof(ks_gps_raw_t) - pos);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/src/core/kestrel_compress.c
     }
 
     return (int)pos;
@@ -613,7 +617,11 @@ int ks_pack_phase3(const ks_header_t *header, const uint8_t *payload, size_t pay
     // Check compression
     if (ks_should_compress(payload, payload_len))
     {
+<<<<<<<< HEAD:Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.c
+        uint8_t compressed[512];
+========
         uint8_t compressed[KS_MAX_PAYLOAD_SIZE + 16]; // Safe size for LZ4-style escape overhead
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/src/core/kestrel_compress.c
         int comp_len = ks_lz4_compress(payload, payload_len, compressed, sizeof(compressed));
         if (comp_len > 0 && (size_t)comp_len < payload_len * 0.9)
         {

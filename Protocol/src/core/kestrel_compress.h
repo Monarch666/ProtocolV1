@@ -40,8 +40,13 @@
  */
 typedef struct
 {
+<<<<<<<< HEAD:Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.h
+    uint32_t history_pos; // history buffer removed (was unused 64KB)
+    bool initialized;
+========
     uint32_t history_pos; /* unused \u2014 history buffer was removed */
     bool initialized;     /* unused \u2014 compression is stateless */
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/src/core/kestrel_compress.h
 } ks_lz4_ctx_t;
 
 /**
@@ -122,9 +127,14 @@ typedef struct
 typedef struct
 {
     ks_fec_params_t params;
+<<<<<<<< HEAD:Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.h
+    uint8_t *shards[32];    // Mixed data + parity shards
+    bool shard_present[32]; // Which shards have been received
+========
     uint8_t shard_data[32][256]; /* BUG-06 FIX: owned copies of received shards (max 32 shards x 255-byte max) */
     uint8_t *shards[32];         /* Pointers into shard_data[] — never dangling */
     bool shard_present[32];      /* Which shards have been received */
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/src/core/kestrel_compress.h
     uint8_t shards_received;
     bool initialized;
 } ks_fec_decoder_t;

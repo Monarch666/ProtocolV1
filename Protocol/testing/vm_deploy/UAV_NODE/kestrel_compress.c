@@ -37,7 +37,7 @@ int ks_lz4_compress(const uint8_t *input, size_t input_len,
     size_t out_pos = 0;
     size_t in_pos = 0;
 
-    while (in_pos < input_len && out_pos < max_output - 2)
+    while (in_pos < input_len)
     {
         uint8_t byte = input[in_pos];
         size_t run = 1;
@@ -52,31 +52,30 @@ int ks_lz4_compress(const uint8_t *input, size_t input_len,
 
         if (run >= 3)
         {
-            // Encode as: FLAG(0xFF) + BYTE + COUNT
+            /* BUG-D FIX: Return error (not truncated output) if buffer is full.
+               The original code used `break` which silently returned a partial
+               compressed stream that the decompressor cannot reconstruct. */
             if (out_pos + 3 > max_output)
-                break;
-            output[out_pos++] = 0xFF; // Run marker
+                return -1; /* Buffer full — caller must provide a larger buffer */
+            output[out_pos++] = 0xFF;
             output[out_pos++] = byte;
             output[out_pos++] = (uint8_t)run;
             in_pos += run;
         }
         else
         {
-            // Literal byte: if it equals the run marker, escape it so the
-            // decompressor cannot mistake it for a run-length sequence.
-            // Encoding: 0xFF 0xFF 0x01  means a single literal 0xFF byte.
             if (byte == 0xFF)
             {
                 if (out_pos + 3 > max_output)
-                    break;
-                output[out_pos++] = 0xFF; // Escape
-                output[out_pos++] = 0xFF; // The literal value
-                output[out_pos++] = 0x01; // Count = 1
+                    return -1;
+                output[out_pos++] = 0xFF;
+                output[out_pos++] = 0xFF;
+                output[out_pos++] = 0x01;
             }
             else
             {
                 if (out_pos + 1 > max_output)
-                    break;
+                    return -1;
                 output[out_pos++] = byte;
             }
             in_pos++;
@@ -101,9 +100,12 @@ int ks_lz4_decompress(const uint8_t *input, size_t input_len,
     {
         uint8_t byte = input[in_pos++];
 
-        if (byte == 0xFF && in_pos + 1 < input_len)
+        /* BUG-05 FIX: Require at least 2 more bytes (value + count) before reading.
+           The original check `in_pos + 1 < input_len` only guaranteed 1 remaining byte,
+           causing an out-of-bounds read on the count byte for truncated inputs. */
+        if (byte == 0xFF && in_pos + 2 <= input_len)
         {
-            // Run-length encoded
+            // Run-length encoded: FLAG(0xFF) + value + count
             uint8_t value = input[in_pos++];
             uint8_t count = input[in_pos++];
 
@@ -114,7 +116,7 @@ int ks_lz4_decompress(const uint8_t *input, size_t input_len,
         }
         else
         {
-            // Literal byte
+            // Literal byte (also handles truncated 0xFF at end of input)
             output[out_pos++] = byte;
         }
     }
@@ -192,32 +194,49 @@ void ks_fec_decoder_init(ks_fec_decoder_t *decoder,
     memset(decoder, 0, sizeof(ks_fec_decoder_t));
     decoder->params.data_shards = data_shards;
     decoder->params.parity_shards = parity_shards;
-    decoder->params.shard_size = 255;
+    /* BUG-C FIX: Do NOT hardcode shard_size to 255 here.
+       It will be set dynamically from the first received shard in ks_fec_add_shard.
+       Hardcoding 255 caused ks_fec_decode to XOR/copy 255 bytes per shard even
+       when the actual shards were much smaller, producing corrupt output. */
+    decoder->params.shard_size = 0; /* Will be set on first ks_fec_add_shard call */
     decoder->initialized = true;
 }
 
 int ks_fec_add_shard(ks_fec_decoder_t *decoder, uint8_t shard_index,
                      const uint8_t *shard_data, size_t shard_size)
 {
-    if (!decoder || shard_index >= 32 || !shard_data)
+    if (!decoder || shard_index >= 32 || !shard_data || shard_size == 0)
     {
         return -1;
     }
 
+    /* Guard: shard_size must fit inside the owned 256-byte buffer slot */
+    if (shard_size > sizeof(decoder->shard_data[0]))
+    {
+        return -1;
+    }
+
+    /* BUG-C FIX: Record actual shard_size from the first received shard.
+       All shards in a session are the same size; using the real size prevents
+       ks_fec_decode from XOR/copying 255 garbage bytes when shards are smaller. */
+    if (decoder->params.shard_size == 0)
+        decoder->params.shard_size = (uint8_t)shard_size;
+
     if (!decoder->shard_present[shard_index])
     {
         decoder->shard_present[shard_index] = true;
-        decoder->shards[shard_index] = (uint8_t *)shard_data;
+
+        /* BUG-06 FIX (previous session): Copy shard data into the decoder-owned buffer
+           to prevent dangling pointers if the caller's buffer is freed before decode. */
+        memcpy(decoder->shard_data[shard_index], shard_data, shard_size);
+        decoder->shards[shard_index] = decoder->shard_data[shard_index];
         decoder->shards_received++;
     }
 
-    // Need at least data_shards packets to decode
     if (decoder->shards_received >= decoder->params.data_shards)
-    {
-        return 1; // Ready to decode
-    }
+        return 1; /* Ready to decode */
 
-    return 0; // Need more shards
+    return 0; /* Need more shards */
 }
 
 int ks_fec_decode(ks_fec_decoder_t *decoder, uint8_t *output)
@@ -292,12 +311,19 @@ int ks_fec_decode(ks_fec_decoder_t *decoder, uint8_t *output)
         }
     }
 
-    // Fallback: copy available data shards only
+    /* BUG-E FIX: Fallback for >1 missing shard or no parity available.
+       The original code skipped missing shards but still advanced total_size,
+       leaving uninitialized holes in the output buffer. Zero-init missing slots. */
     for (uint8_t i = 0; i < decoder->params.data_shards; i++)
     {
         if (decoder->shard_present[i] && decoder->shards[i])
         {
             memcpy(output + total_size, decoder->shards[i], shard_size);
+        }
+        else
+        {
+            /* Zero the hole so callers always get a fully initialized buffer */
+            memset(output + total_size, 0, shard_size);
         }
         total_size += shard_size;
     }
@@ -404,7 +430,14 @@ int ks_delta_encode_gps(ks_delta_ctx_t *ctx, const ks_gps_raw_t *gps,
 
         ctx->prev_gps = *gps;
         g_phase3_stats.delta_encoded_packets++;
+<<<<<<<< HEAD:Protocol/src/core/kestrel_compress.c
+        /* BUG-11 FIX: Guard against uint32_t underflow when large deltas make the
+           encoded output larger than the raw struct. Also removed the spurious +1. */
+        if (sizeof(ks_gps_raw_t) > pos)
+            g_phase3_stats.delta_bytes_saved += (uint32_t)(sizeof(ks_gps_raw_t) - pos);
+========
         g_phase3_stats.delta_bytes_saved += (sizeof(ks_gps_raw_t) - pos + 1);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.c
     }
 
     return (int)pos;
@@ -584,7 +617,11 @@ int ks_pack_phase3(const ks_header_t *header, const uint8_t *payload, size_t pay
     // Check compression
     if (ks_should_compress(payload, payload_len))
     {
+<<<<<<<< HEAD:Protocol/src/core/kestrel_compress.c
+        uint8_t compressed[KS_MAX_PAYLOAD_SIZE + 16]; // Safe size for LZ4-style escape overhead
+========
         uint8_t compressed[512];
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel_compress.c
         int comp_len = ks_lz4_compress(payload, payload_len, compressed, sizeof(compressed));
         if (comp_len > 0 && (size_t)comp_len < payload_len * 0.9)
         {

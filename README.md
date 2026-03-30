@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 # Kestrel  
 
 **Kestrel** is a high-performance **binary communication protocol** purpose-built for **UAV systems**. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. The reference implementation in this repository is provided under the historical `kestrel.*` filenames. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
+=======
+# Kestrel Protocol (formerly Kestrel)
+
+Kestrel is a high-performance binary communication protocol purpose-built for UAV systems. It minimizes packet overhead and maximizes reliability on lossy radio links with built-in encryption, message routing, and integrity checking. The reference implementation in this repository is provided under the historical `kestrel.*` filenames. Features comprehensive optimizations including zero-copy parsing, hardware-accelerated encryption, and advanced compression.
+>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation)
 
 **Current Version:** 1.2.8 (March 2026)
 
@@ -331,10 +337,10 @@ To add Kestrel Core (implemented in the `kestrel.*` files) to your flight contro
 ### Packet Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ [Base Header] [Extended Header] [Payload] [MAC Tag*] [CRC-16]   │
-│    4 bytes      4-13 bytes      0-4095 B   16 bytes*  2 bytes   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────┐─────────────────┐──────────┐──────────┐────────┐
+│[Base Header]│[Extended Header]│ [Payload]│[MAC Tag*]│[CRC-16]│
+│   4 bytes   │  4-13 bytes     │ 0-4095 B │16 bytes* │ 2 bytes│
+└─────────────┘─────────────────┘──────────┘──────────┘────────┘
 * 16-byte Poly1305 MAC tag only present when encrypted flag is set
 ```
 

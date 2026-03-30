@@ -1,6 +1,7 @@
 #include "kestrel.h"
 #include <string.h>
-#include <stdio.h> /* For debug printf */
+#include <stdio.h>  /* For debug printf */
+#include <stdlib.h> /* For abort() */
 #include "monocypher.h"
 
 /**
@@ -70,7 +71,12 @@ uint8_t ks_get_crc_seed(uint16_t msg_id)
 {
     if (msg_id < KS_CRC_SEED_TABLE_SIZE)
         return ks_crc_seed_table[msg_id];
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+    // Hash-based seed for unknown/custom messages instead of 0
+    return (uint8_t)((msg_id * 31 + 7) & 0xFF);
+========
     return 0; // Unknown message
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 }
 
 /* --- Base Header --- */
@@ -215,34 +221,44 @@ static uint16_t float_to_half(float f)
 
 static float half_to_float(uint16_t h)
 {
-    uint32_t x = ((h & 0x8000) << 16);
-    int32_t e = (h >> 10) & 0x1F;
+    /* BUG-04 FIX: Correct IEEE 754 half→float32 conversion including subnormals.
+       Previous code double-shifted the mantissa (shift + 13) which corrupted
+       any subnormal value (very small angular rates near zero). */
+    uint32_t x;
+    int32_t  e = (h >> 10) & 0x1F;
+
     if (e == 0)
     {
-        // Subnormal: handle mantissa != 0 (value = mantissa * 2^-24)
         uint32_t mantissa = h & 0x3FF;
         if (mantissa != 0)
         {
-            x |= (mantissa << 13); // Place mantissa bits
-            // Normalize: find highest set bit
+            /* Normalize: count leading zeros to find the implicit leading 1 */
             int shift = 0;
             uint32_t m = mantissa;
-            while ((m & 0x200) == 0)
-            {
-                m <<= 1;
-                shift++;
-            }
-            x = ((h & 0x8000) << 16) | ((127 - 15 - shift) << 23) | ((mantissa << (shift + 13)) & 0x7FFFFF);
+            while ((m & 0x400) == 0) { m <<= 1; shift++; }
+            m &= 0x3FF; /* Remove the implicit leading 1 */
+            /* Exponent: 127 - 14 - shift (float32 bias=127, half bias=14 for subnormals) */
+            x = ((uint32_t)(h & 0x8000) << 16)
+              | ((uint32_t)(127 - 14 - shift) << 23)
+              | (m << 13);
         }
-        // mantissa == 0 means ±0.0, x is correct already
+        else
+        {
+            x = (uint32_t)(h & 0x8000) << 16; /* ±0.0 */
+        }
     }
     else if (e == 31)
     {
-        x |= 0x7F800000;
+        /* Inf / NaN */
+        x = ((uint32_t)(h & 0x8000) << 16) | 0x7F800000
+          | ((uint32_t)(h & 0x3FF) << 13);
     }
     else
     {
-        x |= ((e - 15 + 127) << 23) | ((h & 0x3FF) << 13);
+        /* Normalized number */
+        x = ((uint32_t)(h & 0x8000) << 16)
+          | ((uint32_t)(e - 15 + 127) << 23)
+          | ((uint32_t)(h & 0x3FF) << 13);
     }
     float f;
     memcpy(&f, &x, sizeof(f));
@@ -785,14 +801,11 @@ static uint32_t ks_get_random_u32(void)
 
     if (!CryptAcquireContext(&hProvider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
     {
-        /* Fallback: use XOR of compile-time and runtime values — not cryptographic,
-           but avoids silently returning 0 which would be a predictable nonce. */
-        random_value = (uint32_t)(uintptr_t)&random_value ^ 0xDEADBEEFu;
-        return random_value;
+        abort(); // Fail instead of fallback
     }
     if (!CryptGenRandom(hProvider, sizeof(random_value), (BYTE *)&random_value))
     {
-        random_value = (uint32_t)(uintptr_t)&random_value ^ 0xCAFEBABEu;
+        abort(); // Fail instead of fallback
     }
     CryptReleaseContext(hProvider, 0);
     return random_value;
@@ -802,15 +815,13 @@ static uint32_t ks_get_random_u32(void)
     int fd = open("/dev/urandom", O_RDONLY);
     if (fd < 0)
     {
-        /* Fallback: use address-space entropy — not cryptographic, but not zero */
-        return (uint32_t)(uintptr_t)&random_value ^ 0xDEADBEEFu;
+        abort(); // Fail instead of fallback
     }
     ssize_t n = read(fd, &random_value, sizeof(random_value));
     close(fd);
     if (n != (ssize_t)sizeof(random_value))
     {
-        /* Partial read fallback */
-        random_value ^= (uint32_t)(uintptr_t)&random_value ^ 0xCAFEBABEu;
+        abort(); // Fail instead of fallback
     }
     return random_value;
 #endif
@@ -856,10 +867,19 @@ void ks_nonce_generate(ks_nonce_state_t *state, uint8_t nonce[8])
        - First 4 bytes: Monotonic counter (ensures uniqueness)
        - Last 4 bytes: Random data (adds entropy) */
 
-    // Detect counter overflow: if counter is about to wrap, reinitialize with fresh random seed
+    /* Bug-11 FIX: On overflow, reset counter to 0 instead of a random re-seed.
+       A random re-seed could land on a counter value already issued in this session,
+       creating a nonce collision window — exactly the property the counter was meant
+       to prevent. Counter 0 is guaranteed fresh because ks_nonce_init() seeds with
+       a CSPRNG value and increments from there, so 0 is never normally issued.
+       Callers should treat a rollover as a signal to re-negotiate the session key. */
     if (state->counter == 0xFFFFFFFF)
     {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        state->counter = 0; /* Guaranteed fresh — ks_nonce_init() never issues counter=0 */
+========
         state->counter = ks_get_random_u32(); // Re-seed instead of silent wrap to 0
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
     }
     uint32_t counter = state->counter++;
     uint32_t random = ks_get_random_u32();
@@ -877,9 +897,46 @@ void ks_nonce_generate(ks_nonce_state_t *state, uint8_t nonce[8])
     nonce[7] = (random >> 24) & 0xFF;
 }
 
+/* --- Session Lifecycle --- */
+
+int ks_session_init(ks_session_t *session, const uint8_t key[32])
+{
+    if (!session || !key)
+        return -1;
+
+    memcpy(session->key, key, 32);
+    ks_nonce_init(&session->nonce_state);
+
+    if (!session->nonce_state.initialized)
+    {
+        /* CSPRNG failure — wipe partial state and report */
+        crypto_wipe(session->key, 32);
+        return -1;
+    }
+
+    session->initialized = true;
+    return 0;
+}
+
+void ks_session_destroy(ks_session_t *session)
+{
+    if (!session)
+        return;
+    crypto_wipe(session, sizeof(ks_session_t));
+}
+
 /* --- Send Pack API --- */
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+/* Internal only — called exclusively via kestrel_pack_with_nonce().
+   The caller guarantees the nonce was just generated by ks_nonce_generate(),
+   so the value-based nonce check is unnecessary and has been removed.
+   The architecture now makes nonce misuse structurally inexpressible. */
+static int kestrel_pack_internal(uint8_t *buf, const ks_header_t *h,
+                                 const uint8_t *payload, const uint8_t *key_32b)
+========
 int kestrel_pack(uint8_t *buf, const ks_header_t *h, const uint8_t *payload, const uint8_t *key_32b)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 {
     /* Input validation */
     if (!buf || !h || !payload)
@@ -893,6 +950,10 @@ int kestrel_pack(uint8_t *buf, const ks_header_t *h, const uint8_t *payload, con
     if (key_32b)
     {
         hout.encrypted = true;
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        /* Architecture guarantee: nonce was generated by ks_nonce_generate() in
+           kestrel_pack_with_nonce() just before this call. Value check removed. */
+========
         /* WARNING: Legacy mode - nonce must be pre-filled in header!
            For secure operation, use kestrel_pack_with_nonce() instead.
            This function assumes the caller has already set a unique nonce. */
@@ -909,6 +970,7 @@ int kestrel_pack(uint8_t *buf, const ks_header_t *h, const uint8_t *payload, con
             hout.nonce[3] = (counter >> 24) & 0xFF;
             /* Leave upper 4 bytes as zero */
         }
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
     }
     else
     {
@@ -937,8 +999,6 @@ int kestrel_pack(uint8_t *buf, const ks_header_t *h, const uint8_t *payload, con
         /* crypto_aead_lock(mac, ciphertext, key, nonce, ad, ad_size, plaintext, text_size)
            - Encrypts payload and generates MAC over both header (AAD) and ciphertext
            - MAC protects against both ciphertext and header manipulation */
-
-
 
         crypto_aead_lock(buf + header_len,  /* Output: ciphertext */
                          mac,               /* Output: MAC tag */
@@ -991,9 +1051,31 @@ void ks_parser_init(ks_parser_t *p)
     p->error_count = 0;
 }
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+/* Bug-4 FIX: Ephemeral-only reset for all error paths inside ks_parse_char().
+   Resets only the parse-state-machine fields (state, buf_idx) while PRESERVING
+   the replay window (replay_init, last_seq, replay_window) and link statistics
+   (rx_count, error_count). Without this separation, an attacker who floods the
+   receiver with CRC-invalid garbage can continuously reset the replay window,
+   allowing re-injection of previously-captured authentic packets.
+   ks_parser_init() is reserved for true first-time initialisation only. */
+static void ks_parser_reset_ephemeral(ks_parser_t *p)
+{
+    if (!p)
+        return;
+    p->state = KS_PARSE_STATE_IDLE;
+    p->buf_idx = 0;
+    /* replay_init, last_seq, replay_window, rx_count, error_count: intentionally preserved */
+}
+
 int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
 {
     if (!p)
+========
+int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
+{
+    if (!p)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
         return KS_ERR_NULL_POINTER;
 
     switch (p->state)
@@ -1016,7 +1098,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
                 /* Bounds check: reject payloads exceeding buffer capacity */
                 if (p->header.payload_len > KS_MAX_PAYLOAD_SIZE)
                 {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                    ks_parser_reset_ephemeral(p);
+========
                     ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
                     p->error_count++;
                     return KS_ERR_BUFFER_OVERFLOW;
                 }
@@ -1066,7 +1152,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
     case KS_PARSE_STATE_PAYLOAD:
         if (p->buf_idx >= sizeof(p->buffer))
         {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+            ks_parser_reset_ephemeral(p);
+========
             ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
             p->error_count++;
             return KS_ERR_BUFFER_OVERFLOW;
         }
@@ -1081,7 +1171,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
     case KS_PARSE_STATE_CRC:
         if (p->buf_idx >= sizeof(p->buffer))
         {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+            ks_parser_reset_ephemeral(p);
+========
             ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
             p->error_count++;
             return KS_ERR_BUFFER_OVERFLOW;
         }
@@ -1100,7 +1194,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
 
             if (crc_in != crc_calc)
             {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                ks_parser_reset_ephemeral(p);
+========
                 ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
                 p->error_count++;
                 return KS_ERR_CRC;
             }
@@ -1112,7 +1210,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
             {
                 if (!key_32b)
                 {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                    ks_parser_reset_ephemeral(p);
+========
                     ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
                     p->error_count++;
                     return KS_ERR_NO_KEY;
                 }
@@ -1141,7 +1243,11 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
                 if (auth_result != 0)
                 {
                     /* MAC verification failed - packet has been tampered with! */
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                    ks_parser_reset_ephemeral(p);
+========
                     ks_parser_init(p);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
                     p->error_count++;
                     return KS_ERR_MAC_VERIFICATION;
                 }
@@ -1153,19 +1259,33 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
 
             // Replay protection: 32-packet sliding window
             {
-                uint8_t seq = (uint8_t)p->header.sequence;
+                uint16_t seq = p->header.sequence;
                 if (p->replay_init)
                 {
-                    int8_t diff = (int8_t)(seq - p->last_seq);
+                    int16_t diff = (int16_t)(seq - p->last_seq);
+                    // Handle 12-bit sequence wrap-around
+                    if (diff > 2047)
+                        diff -= 4096;
+                    else if (diff < -2048)
+                        diff += 4096;
+
                     if (diff <= 0)
                     {
                         /* Packet is older than or equal to the highest seen */
                         uint8_t offset = (uint8_t)(-diff);
                         if (offset >= 32 || (p->replay_window & (1UL << offset)))
                         {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                            /* BUG-02 FIX: Return KS_ERR_REPLAY (not KS_ERR_CRC) so
+                               callers can distinguish replay attacks from link errors. */
+                            ks_parser_reset_ephemeral(p);
+                            p->error_count++;
+                            return KS_ERR_REPLAY;
+========
                             /* Outside window or already seen: replay */
                             ks_parser_init(p);
                             return KS_ERR_CRC; /* Reuse error code for replay */
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
                         }
                         p->replay_window |= (1UL << offset);
                     }
@@ -1194,27 +1314,53 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
         }
         break;
     }
-    return 1; // Still parsing (need more bytes)
+    /* Parser return value convention:
+       KS_OK (0)  = complete valid packet ready in parser->payload / parser->header
+       1          = still parsing, need more bytes (not an error)
+       < 0        = error (KS_ERR_CRC, KS_ERR_REPLAY, KS_ERR_MAC_VERIFICATION, …)
+       The previous BUG-03 "fix" changed this to 0 which collided with KS_OK
+       and caused every byte to trigger a false "packet complete". Reverted. */
+    return 1; /* Still parsing — need more bytes */
 }
 
 /* --- Advanced Packing with Nonce Management --- */
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+int kestrel_pack_with_nonce(uint8_t *buf, const ks_header_t *h,
+                            const uint8_t *payload, ks_session_t *session)
+========
 int kestrel_pack_with_nonce(uint8_t *buf, const ks_header_t *h, const uint8_t *payload,
                             const uint8_t *key_32b, ks_nonce_state_t *nonce_state)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 {
     if (!buf || !h || !payload)
         return KS_ERR_NULL_POINTER;
 
     ks_header_t hout = *h;
 
-    if (key_32b && nonce_state)
+    if (session)
     {
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        /* Session existence structurally guarantees both key AND nonce state are
+           present and properly seeded. It is now impossible to provide a key
+           without a nonce state: Bug-1 and Bug-2 are eliminated by design. */
+        if (!session->initialized)
+            return KS_ERR_INVALID_HEADER; /* session was never properly initialised */
+
+        ks_nonce_generate(&session->nonce_state, hout.nonce);
+        return kestrel_pack_internal(buf, &hout, payload, session->key);
+    }
+
+    /* NULL session = transmit unencrypted */
+    return kestrel_pack_internal(buf, &hout, payload, NULL);
+========
         /* Generate secure nonce using hybrid approach */
         ks_nonce_generate(nonce_state, hout.nonce);
     }
 
     /* Use standard packing function (nonce is now in header) */
     return kestrel_pack(buf, &hout, payload, key_32b);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 }
 
 /* ======================================================================
@@ -1226,8 +1372,25 @@ int kestrel_pack_with_nonce(uint8_t *buf, const ks_header_t *h, const uint8_t *p
 /* Default encryption policy lookup.
    Replaces the previous 4KB static array (1024 entries, 7 used) with a
    switch-case to save ~4KB of BSS on embedded targets. */
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+
+/* BUG-08 FIX: Override table — must be declared before ks_get_encrypt_policy uses it. */
+#define KS_ENCRYPT_OVERRIDE_MAX 8
+typedef struct { uint16_t msg_id; ks_encrypt_policy_t policy; } ks_encrypt_override_t;
+static ks_encrypt_override_t g_encrypt_overrides[KS_ENCRYPT_OVERRIDE_MAX];
+static int g_encrypt_override_count = 0;
+
+========
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 ks_encrypt_policy_t ks_get_encrypt_policy(uint16_t msg_id)
 {
+    /* BUG-08 FIX: Check runtime overrides first before falling through to defaults. */
+    for (int i = 0; i < g_encrypt_override_count; i++)
+    {
+        if (g_encrypt_overrides[i].msg_id == msg_id)
+            return g_encrypt_overrides[i].policy;
+    }
+
     switch (msg_id)
     {
     case KS_MSG_HEARTBEAT:
@@ -1259,31 +1422,71 @@ ks_encrypt_policy_t ks_get_encrypt_policy(uint16_t msg_id)
     }
 }
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+/* ks_set_encrypt_policy: implemented immediately after the table it uses. */
+========
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 void ks_set_encrypt_policy(uint16_t msg_id, ks_encrypt_policy_t policy)
 {
-    /* Runtime override is not supported with the switch-based table.
-       Extend this function with a small override array if needed. */
-    (void)msg_id;
-    (void)policy;
+    /* Update existing override if present */
+    for (int i = 0; i < g_encrypt_override_count; i++)
+    {
+        if (g_encrypt_overrides[i].msg_id == msg_id)
+        {
+            g_encrypt_overrides[i].policy = policy;
+            return;
+        }
+    }
+    /* Add new override if space available */
+    if (g_encrypt_override_count < KS_ENCRYPT_OVERRIDE_MAX)
+    {
+        g_encrypt_overrides[g_encrypt_override_count].msg_id  = msg_id;
+        g_encrypt_overrides[g_encrypt_override_count].policy  = policy;
+        g_encrypt_override_count++;
+    }
 }
 
 /* OPTIMIZATION: Pack with selective encryption based on message policy
    Bandwidth savings: Heartbeat 46→12 bytes (73% reduction) */
 int kestrel_pack_selective(uint8_t *buf, const ks_header_t *h, const uint8_t *payload,
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                           ks_session_t *session)
+========
                            const uint8_t *key_32b, ks_nonce_state_t *nonce_state)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 {
     if (!buf || !h || !payload)
         return KS_ERR_NULL_POINTER;
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+    ks_encrypt_policy_t policy = ks_get_encrypt_policy(h->msg_id);
+========
     /* Check encryption policy for this message */
     ks_encrypt_policy_t policy = ks_get_encrypt_policy(h->msg_id);
 
     /* Determine if we should encrypt */
     const uint8_t *effective_key = NULL;
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 
     switch (policy)
     {
     case KS_ENCRYPT_NEVER:
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        /* Always transmit in clear regardless of session */
+        return kestrel_pack_with_nonce(buf, h, payload, NULL);
+
+    case KS_ENCRYPT_OPTIONAL:
+        /* Encrypt if session available, skip if not */
+        return kestrel_pack_with_nonce(buf, h, payload, session);
+
+    case KS_ENCRYPT_ALWAYS:
+        if (!session)
+            return KS_ERR_NO_KEY; /* Policy violation — session required */
+        return kestrel_pack_with_nonce(buf, h, payload, session);
+    }
+
+    return KS_ERR_INVALID_HEADER; /* Unreachable — satisfies compiler */
+========
         effective_key = NULL; /* Never encrypt, ignore key */
         break;
 
@@ -1300,6 +1503,7 @@ int kestrel_pack_selective(uint8_t *buf, const ks_header_t *h, const uint8_t *pa
 
     /* Pack with determined encryption policy */
     return kestrel_pack_with_nonce(buf, h, payload, effective_key, nonce_state);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 }
 
 /* --- OPTIMIZATION 2: Crypto Context Caching (30% speedup) --- */
@@ -1315,34 +1519,35 @@ void ks_crypto_ctx_init(ks_crypto_ctx_t *ctx)
 /* OPTIMIZATION: Pack with crypto context caching
    Performance: Reduces crypto overhead by ~30% for consecutive packets with same key */
 int kestrel_pack_cached(uint8_t *buf, const ks_header_t *h, const uint8_t *payload,
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                        ks_session_t *session, ks_crypto_ctx_t *crypto_ctx)
+========
                         const uint8_t *key_32b, ks_nonce_state_t *nonce_state,
                         ks_crypto_ctx_t *crypto_ctx)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 {
     if (!buf || !h || !payload)
         return KS_ERR_NULL_POINTER;
 
-    /* Check if we can use cached crypto context */
-    bool can_use_cache = false;
-
-    if (crypto_ctx && crypto_ctx->valid && key_32b)
+    /* Update crypto context cache if we have a session */
+    if (crypto_ctx && session && session->initialized)
     {
-        /* Check if same key as cached */
-        if (memcmp(crypto_ctx->last_key, key_32b, 32) == 0)
+        if (!crypto_ctx->valid ||
+            memcmp(crypto_ctx->last_key, session->key, 32) != 0)
         {
-            can_use_cache = true;
+            memcpy(crypto_ctx->last_key, session->key, 32);
+            crypto_ctx->valid = 1;
         }
     }
-
-    /* If cache miss, update cache with new key */
-    if (crypto_ctx && key_32b && !can_use_cache)
+    else if (crypto_ctx)
     {
-        memcpy(crypto_ctx->last_key, key_32b, 32);
-        crypto_ctx->valid = 1;
-        /* Note: In a full implementation, we would cache the expanded ChaCha20 state here
-         * For monocypher, the key expansion happens internally, so the benefit is smaller
-         * In a custom SIMD implementation, this cache would store the expanded 16x32-bit state */
+        crypto_ctx->valid = 0;
     }
 
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+    /* Apply selective encryption policy */
+    return kestrel_pack_selective(buf, h, payload, session);
+========
     /* Apply selective encryption policy to the cached pack */
     ks_encrypt_policy_t policy = ks_get_encrypt_policy(h->msg_id);
     const uint8_t *effective_key = NULL;
@@ -1359,6 +1564,7 @@ int kestrel_pack_cached(uint8_t *buf, const ks_header_t *h, const uint8_t *paylo
     }
 
     return kestrel_pack_with_nonce(buf, h, payload, effective_key, nonce_state);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 }
 
 /* --- OPTIMIZATION 3: Message Batching (18% bandwidth reduction) --- */
@@ -1366,8 +1572,12 @@ int kestrel_pack_cached(uint8_t *buf, const ks_header_t *h, const uint8_t *paylo
 /* OPTIMIZATION: Pack multiple messages into a single batched packet
    Bandwidth savings: 3×(8 header + 10 payload) → 1×(8 header + 3×12 data) = 54→44 bytes (18.5%) */
 int kestrel_pack_batch(uint8_t *buf, const ks_batch_t *batch,
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+                       ks_session_t *session, uint8_t priority)
+========
                        const uint8_t *key_32b, ks_nonce_state_t *nonce_state,
                        uint8_t priority)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 {
     if (!buf || !batch)
         return KS_ERR_NULL_POINTER;
@@ -1423,7 +1633,22 @@ int kestrel_pack_batch(uint8_t *buf, const ks_batch_t *batch,
     header.target_sys_id = 0; /* Broadcast */
 
     /* Pack the batched message using selective encryption */
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+    int ret = kestrel_pack_selective(buf, &header, payload, session);
+
+    /* Securely clear the stack payload buffer to prevent leaking sensitive batch data */
+    {
+        volatile uint8_t *p = (volatile uint8_t *)payload;
+        for (size_t idx = 0; idx < sizeof(payload); idx++)
+        {
+            p[idx] = 0;
+        }
+    }
+
+    return ret;
+========
     return kestrel_pack_selective(buf, &header, payload, key_32b, nonce_state);
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
 }
 
 int ks_deserialize_batch(const uint8_t *payload, uint16_t payload_len,
@@ -1443,7 +1668,11 @@ int ks_deserialize_batch(const uint8_t *payload, uint16_t payload_len,
     for (uint8_t i = 0; i < num_messages; i++)
     {
         /* Need 3 bytes: msg_id (2) + length (1) */
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        if (3 > payload_len - pos)
+========
         if (pos + 3 > payload_len)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
             return KS_ERR_BUFFER_OVERFLOW;
 
         uint16_t msg_id = (uint16_t)payload[pos] | ((uint16_t)payload[pos + 1] << 8);
@@ -1453,7 +1682,11 @@ int ks_deserialize_batch(const uint8_t *payload, uint16_t payload_len,
         /* Validate length fits within data[] and remaining payload */
         if (length > sizeof(batch_out->messages[i].data))
             return KS_ERR_BUFFER_OVERFLOW;
+<<<<<<<< HEAD:Protocol/src/core/kestrel.c
+        if (length > payload_len - pos)
+========
         if (pos + length > payload_len)
+>>>>>>>> 1f0c66a (perf(keymanager): persistent CSPRNG fd + atomic three-stage key rotation):Protocol/testing/vm_deploy/UAV_NODE/kestrel.c
             return KS_ERR_BUFFER_OVERFLOW;
 
         batch_out->messages[i].msg_id = msg_id;
@@ -1464,4 +1697,70 @@ int ks_deserialize_batch(const uint8_t *payload, uint16_t payload_len,
 
     batch_out->num_messages = num_messages;
     return 0;
+}
+
+/* =============================================================================
+ * BUG-09 FIX: ks_reassembly_add_timed — evicts stale slots before adding.
+ * Pass now_ms from your platform clock (GetTickCount / clock_gettime etc.).
+ * ============================================================================= */
+int ks_reassembly_add_timed(ks_reassembly_ctx_t *ctx, const ks_header_t *hdr,
+                             const uint8_t *payload, uint16_t payload_len,
+                             uint8_t *output, uint16_t *output_len,
+                             uint32_t now_ms)
+{
+    if (!ctx || !hdr || !payload || !output || !output_len)
+        return -1;
+
+    /* Evict any slot that has exceeded KS_FRAG_TIMEOUT_MS */
+    for (int i = 0; i < 4; i++)
+    {
+        if (ctx->slots[i].active &&
+            (now_ms - ctx->slots[i].start_time_ms) > KS_FRAG_TIMEOUT_MS)
+        {
+            ctx->slots[i].active = false; /* Evict timed-out incomplete reassembly */
+        }
+    }
+
+    /* Record start_time_ms when we open a new slot */
+    /* Find an existing slot for this (msg_id, sys_id) */
+    int slot_idx = -1;
+    for (int i = 0; i < 4; i++)
+    {
+        if (ctx->slots[i].active &&
+            ctx->slots[i].msg_id == hdr->msg_id &&
+            ctx->slots[i].sys_id == hdr->sys_id)
+        {
+            slot_idx = i;
+            break;
+        }
+    }
+    if (slot_idx == -1)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            if (!ctx->slots[i].active)
+            {
+                slot_idx = i;
+                break;
+            }
+        }
+    }
+    if (slot_idx == -1)
+        return -1; /* No slots available */
+
+    /* Bug-3 FIX: The original code stamped start_time_ms before calling
+       ks_reassembly_add(), which then re-initialised the slot (active=true,
+       frags_received=0, etc.) WITHOUT carrying the timestamp. The stamp was lost.
+
+       Fix: record whether the slot was inactive, call ks_reassembly_add() to let it
+       own slot initialisation, then re-stamp start_time_ms on the confirmed-active
+       slot. slot_idx is fully resolved before both calls so there is no ambiguity. */
+    bool slot_was_inactive = !ctx->slots[slot_idx].active;
+    int result = ks_reassembly_add(ctx, hdr, payload, payload_len, output, output_len);
+
+    /* Stamp the opening time on a slot that was just activated by ks_reassembly_add() */
+    if (slot_was_inactive && ctx->slots[slot_idx].active)
+        ctx->slots[slot_idx].start_time_ms = now_ms;
+
+    return result;
 }

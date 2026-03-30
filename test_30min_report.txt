@@ -1,0 +1,75 @@
+=================================================================
+  Kestrel 30-Minute Internal Integration Test Report
+  Generated : 2026-03-27 18:20:12
+  Verdict   : PASS
+=================================================================
+
+  DURATION & COVERAGE
+    Duration tracked        : 1800s (30.0 min)
+    Total log lines         : 20708
+
+  METRICS
+    UAV packets sent        : 1
+    GCS packets received    : 1
+    ECDH session triggers   : 7
+    FEC recovery events     : 0
+
+  SECURITY EVENTS
+    Replay alerts           : 0
+    Auth / MAC failures     : 0
+    CRC errors              : 0
+    Compress/FEC errors     : 0
+
+  STABILITY
+    UAV crash signals       : 0
+    GCS crash signals       : 0
+
+  STATUS: No critical errors detected.
+
+  LAST 20 LINES [UAV Simulator]:
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+    [TM] ALT:0 BAT:12600 MODE:0 ARMED:0 ROLL:0.00 PITCH:0.00 YAW:0.00
+
+  LAST 20 LINES [GCS Receiver]:
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21171 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21171 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21184 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21184 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21197 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21197 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21210 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21210 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21223 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21223 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21236 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21236 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21249 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21249 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21262 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21262 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21275 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21275 ERR=0
+    [HB] DISARMED | MANUAL | Status:0x3 | Pkts:21288 ACKs:0 Errors:0
+    [TM] HEARTBEAT: ARMED=0 MODE=0 STAT=0x3 PKTS=21288 ERR=0
+
+=================================================================
+  End of Report
+=================================================================
