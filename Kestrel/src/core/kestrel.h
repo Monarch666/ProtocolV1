@@ -58,6 +58,7 @@ typedef enum
 #define KS_STREAM_SENSOR 0x6
 #define KS_STREAM_HEARTBEAT 0x7
 #define KS_STREAM_ALERT 0x8
+#define KS_STREAM_NPNT  0x9  /* DGCA NPNT compliance traffic             */
 #define KS_STREAM_CUSTOM 0xF
 
 /* Parsed message header structure */
@@ -97,6 +98,16 @@ typedef struct
 #define KS_MSG_KEY_EXCHANGE 0x00A
 #define KS_MSG_KEY_EXCHANGE_ACK 0x00B
 #define KS_MSG_BATCH 0x3FF /* Special message ID for message batching */
+
+/* --- Compliance Extension Message IDs --- */
+/* DO-362A: Link Quality Reporting */
+#define KS_MSG_LINK_STATUS     0x012 /* Link quality metrics for DO-362A budget */
+/* DGCA NPNT (India NPNT mandate) */
+#define KS_MSG_NPNT_PA         0x020 /* Permission Artifact push (GCS -> UAV)   */
+#define KS_MSG_NPNT_STATUS     0x021 /* NPNT validation status reply (UAV -> GCS)*/
+/* ASTM F3411 Remote ID */
+#define KS_MSG_RID_BASIC_ID    0x030 /* F3411 Basic ID broadcast frame          */
+#define KS_MSG_RID_LOCATION    0x031 /* F3411 Location/Vector broadcast frame   */
 
 /* Command IDs (used in ks_command_t.command_id) */
 #define KS_CMD_ARM 0x0001       /* Arm motors */
@@ -181,9 +192,14 @@ typedef struct
  */
 typedef struct
 {
-    uint8_t          key[32];     /* 32-byte session key (ChaCha20-Poly1305) */
-    ks_nonce_state_t nonce_state; /* Nonce counter — managed exclusively by ks_nonce_generate() */
+    uint8_t          key[32];     /* 32-byte session key (ChaCha20-Poly1305)  */
+    ks_nonce_state_t nonce_state; /* Nonce counter — managed by ks_nonce_generate() */
     bool             initialized; /* true iff ks_session_init() has succeeded */
+    /* DO-377A: Satellite / BLOS link latency parameters.          */
+    /* Default values (0) fall back to synchronous single-command  */
+    /* behaviour — fully backward compatible.                      */
+    uint16_t         ack_timeout_ms; /* Max RTT before command slot times out (0=500ms default) */
+    uint8_t          window_size;    /* Max in-flight commands without ACK    (0=1, sat=4)      */
 } ks_session_t;
 
 /**
@@ -233,6 +249,11 @@ typedef struct
     uint8_t system_type;
     uint8_t autopilot_type;
     uint8_t base_mode;
+    /* DO-362A: Configurable lost-link failsafe parameters.        */
+    /* Set by GCS via heartbeat; UAV applies at runtime.           */
+    /* lost_link_action: 0=none 1=Land 2=RTL 3=Hover              */
+    uint8_t  lost_link_action;     /* Action to take on link loss */
+    uint16_t lost_link_timeout_s;  /* Seconds of silence before failsafe triggers */
 } ks_heartbeat_t;
 
 /* Attitude angles as float32, rates packed into float16 over the wire */
@@ -341,6 +362,45 @@ typedef struct
     uint16_t loiter_time; // Loiter time at waypoint (seconds)
 } ks_mission_item_t;
 
+/* --- DGCA NPNT Permission Artifact (KS_MSG_NPNT_PA) --- */
+/* GCS pushes the PA to the UAV before arming. UAV verifies the Ed25519
+ * signature against the pre-loaded DGCA public key, checks the UTC
+ * validity window, and confirms its GPS is inside the geofence radius. */
+typedef struct
+{
+    uint8_t  signature[64]; /* Ed25519 sig over [valid_from|valid_until|lat|lon|radius] */
+    uint32_t valid_from;    /* Unix UTC timestamp — earliest permitted arm time         */
+    uint32_t valid_until;   /* Unix UTC timestamp — latest permitted arm time           */
+    int32_t  center_lat;    /* Geofence centre latitude  (deg × 1e7)                   */
+    int32_t  center_lon;    /* Geofence centre longitude (deg × 1e7)                   */
+    uint16_t radius_m;      /* Geofence radius in metres                               */
+} ks_npnt_pa_t;             /* Total wire size: 82 bytes                               */
+
+/* NPNT validation status reply (UAV -> GCS, KS_MSG_NPNT_STATUS) */
+typedef struct
+{
+    uint8_t  status;        /* 0=OK 1=BAD_SIG 2=EXPIRED 3=OUTSIDE_FENCE 4=DISABLED */
+    uint32_t valid_until;   /* Echo the PA expiry so GCS know when to re-push        */
+} ks_npnt_status_t;
+
+/* --- ASTM F3411 Remote ID structs (KS_MSG_RID_BASIC_ID / RID_LOCATION) --- */
+typedef struct
+{
+    uint8_t  id_type;    /* 0x10=Serial 0x20=CAA-assigned 0x30=UTM-assigned */
+    uint8_t  ua_type;    /* 0=None 1=Aeroplane 2=Helicopter 5=Rotorcraft    */
+    char     uas_id[20]; /* UAV serial number or CAA-assigned ID (ASCII)    */
+} ks_rid_basic_id_t;
+
+typedef struct
+{
+    uint8_t  status;         /* 0=Undeclared 1=Ground 2=Airborne 3=Emergency */
+    int32_t  lat;            /* Latitude  (deg × 1e7)                        */
+    int32_t  lon;            /* Longitude (deg × 1e7)                        */
+    int16_t  geodetic_alt;   /* Geodetic altitude above WGS84 (metres × 2)  */
+    uint16_t speed;          /* Horizontal ground speed (cm/s)               */
+    int16_t  track_deg;      /* Track direction (deg × 100, 0=North)         */
+} ks_rid_location_t;
+
 /* --- Fragment Reassembly --- */
 #define KS_FRAG_MAX_PAYLOAD 256  // Max payload per fragment
 #define KS_FRAG_MAX_FRAGMENTS 16 // Max fragments per message
@@ -438,6 +498,18 @@ int ks_deserialize_mode_change(ks_mode_change_t *mode, const uint8_t *payload_bu
 
 int ks_serialize_mission_item(const ks_mission_item_t *item, uint8_t *payload_buf);
 int ks_deserialize_mission_item(ks_mission_item_t *item, const uint8_t *payload_buf);
+
+/* DGCA NPNT Permission Artifact serialization */
+int ks_serialize_npnt_pa(const ks_npnt_pa_t *pa, uint8_t *payload_buf);
+int ks_deserialize_npnt_pa(ks_npnt_pa_t *pa, const uint8_t *payload_buf);
+int ks_serialize_npnt_status(const ks_npnt_status_t *st, uint8_t *payload_buf);
+int ks_deserialize_npnt_status(ks_npnt_status_t *st, const uint8_t *payload_buf);
+
+/* ASTM F3411 Remote ID serialization */
+int ks_serialize_rid_basic_id(const ks_rid_basic_id_t *rid, uint8_t *payload_buf);
+int ks_deserialize_rid_basic_id(ks_rid_basic_id_t *rid, const uint8_t *payload_buf);
+int ks_serialize_rid_location(const ks_rid_location_t *loc, uint8_t *payload_buf);
+int ks_deserialize_rid_location(ks_rid_location_t *loc, const uint8_t *payload_buf);
 
 /* CRC Computations */
 void ks_crc_init(uint16_t *crcAccum);

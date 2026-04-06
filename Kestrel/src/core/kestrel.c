@@ -341,7 +341,11 @@ int ks_serialize_heartbeat(const ks_heartbeat_t *hb, uint8_t *out)
     out[4] = hb->system_type;
     out[5] = hb->autopilot_type;
     out[6] = hb->base_mode;
-    return 7;
+    /* DO-362A: lost-link failsafe parameters (bytes 7-9) */
+    out[7] = hb->lost_link_action;
+    out[8] = (hb->lost_link_timeout_s) & 0xFF;
+    out[9] = (hb->lost_link_timeout_s >> 8) & 0xFF;
+    return 10;
 }
 
 int ks_deserialize_heartbeat(ks_heartbeat_t *hb, const uint8_t *in)
@@ -355,7 +359,10 @@ int ks_deserialize_heartbeat(ks_heartbeat_t *hb, const uint8_t *in)
     hb->system_type = in[4];
     hb->autopilot_type = in[5];
     hb->base_mode = in[6];
-    return 7;
+    /* DO-362A: lost-link failsafe parameters (bytes 7-9, optional) */
+    hb->lost_link_action    = in[7];
+    hb->lost_link_timeout_s = (uint16_t)in[8] | ((uint16_t)in[9] << 8);
+    return 10;
 }
 
 /* --- GPS Raw Message Serialization --- */
@@ -647,6 +654,127 @@ int ks_deserialize_mission_item(ks_mission_item_t *item, const uint8_t *in)
     item->speed = unpack_uint16(&in[16]);
     item->loiter_time = unpack_uint16(&in[18]);
     return 20;
+}
+
+/* --- DGCA NPNT Permission Artifact Serialization --- */
+/* Wire layout (82 bytes):
+ *   [0..63]  signature (Ed25519, 64 bytes)
+ *   [64..67] valid_from  (uint32 LE)
+ *   [68..71] valid_until (uint32 LE)
+ *   [72..75] center_lat  (int32  LE)
+ *   [76..79] center_lon  (int32  LE)
+ *   [80..81] radius_m    (uint16 LE)
+ */
+int ks_serialize_npnt_pa(const ks_npnt_pa_t *pa, uint8_t *out)
+{
+    if (!pa || !out) return KS_ERR_NULL_POINTER;
+    memcpy(out, pa->signature, 64);
+    out[64] = (uint8_t)(pa->valid_from);
+    out[65] = (uint8_t)(pa->valid_from >> 8);
+    out[66] = (uint8_t)(pa->valid_from >> 16);
+    out[67] = (uint8_t)(pa->valid_from >> 24);
+    out[68] = (uint8_t)(pa->valid_until);
+    out[69] = (uint8_t)(pa->valid_until >> 8);
+    out[70] = (uint8_t)(pa->valid_until >> 16);
+    out[71] = (uint8_t)(pa->valid_until >> 24);
+    pack_int32(&out[72], pa->center_lat);
+    pack_int32(&out[76], pa->center_lon);
+    pack_uint16(&out[80], pa->radius_m);
+    return 82;
+}
+
+int ks_deserialize_npnt_pa(ks_npnt_pa_t *pa, const uint8_t *in)
+{
+    if (!pa || !in) return KS_ERR_NULL_POINTER;
+    memcpy(pa->signature, in, 64);
+    pa->valid_from  = (uint32_t)in[64] | ((uint32_t)in[65] << 8)
+                    | ((uint32_t)in[66] << 16) | ((uint32_t)in[67] << 24);
+    pa->valid_until = (uint32_t)in[68] | ((uint32_t)in[69] << 8)
+                    | ((uint32_t)in[70] << 16) | ((uint32_t)in[71] << 24);
+    pa->center_lat  = unpack_int32(&in[72]);
+    pa->center_lon  = unpack_int32(&in[76]);
+    pa->radius_m    = unpack_uint16(&in[80]);
+    return 82;
+}
+
+int ks_serialize_npnt_status(const ks_npnt_status_t *st, uint8_t *out)
+{
+    if (!st || !out) return KS_ERR_NULL_POINTER;
+    out[0] = st->status;
+    out[1] = (uint8_t)(st->valid_until);
+    out[2] = (uint8_t)(st->valid_until >> 8);
+    out[3] = (uint8_t)(st->valid_until >> 16);
+    out[4] = (uint8_t)(st->valid_until >> 24);
+    return 5;
+}
+
+int ks_deserialize_npnt_status(ks_npnt_status_t *st, const uint8_t *in)
+{
+    if (!st || !in) return KS_ERR_NULL_POINTER;
+    st->status      = in[0];
+    st->valid_until = (uint32_t)in[1] | ((uint32_t)in[2] << 8)
+                    | ((uint32_t)in[3] << 16) | ((uint32_t)in[4] << 24);
+    return 5;
+}
+
+/* --- ASTM F3411 Remote ID Serialization --- */
+/* Basic ID wire layout (22 bytes):
+ *   [0]     id_type
+ *   [1]     ua_type
+ *   [2..21] uas_id (20 ASCII bytes, zero-padded)
+ */
+int ks_serialize_rid_basic_id(const ks_rid_basic_id_t *rid, uint8_t *out)
+{
+    if (!rid || !out) return KS_ERR_NULL_POINTER;
+    out[0] = rid->id_type;
+    out[1] = rid->ua_type;
+    memcpy(&out[2], rid->uas_id, 20);
+    return 22;
+}
+
+int ks_deserialize_rid_basic_id(ks_rid_basic_id_t *rid, const uint8_t *in)
+{
+    if (!rid || !in) return KS_ERR_NULL_POINTER;
+    rid->id_type = in[0];
+    rid->ua_type = in[1];
+    memcpy(rid->uas_id, &in[2], 20);
+    return 22;
+}
+
+/* Location wire layout (16 bytes):
+ *   [0]     status
+ *   [1..4]  lat  (int32 LE)
+ *   [5..8]  lon  (int32 LE)
+ *   [9..10] geodetic_alt (int16 LE)
+ *   [11..12] speed (uint16 LE)
+ *   [13..14] track_deg (int16 LE)
+ *   [15]    reserved/padding
+ */
+int ks_serialize_rid_location(const ks_rid_location_t *loc, uint8_t *out)
+{
+    if (!loc || !out) return KS_ERR_NULL_POINTER;
+    out[0] = loc->status;
+    pack_int32(&out[1],  loc->lat);
+    pack_int32(&out[5],  loc->lon);
+    out[9]  = (uint8_t)(loc->geodetic_alt);
+    out[10] = (uint8_t)((uint16_t)loc->geodetic_alt >> 8);
+    pack_uint16(&out[11], loc->speed);
+    out[13] = (uint8_t)(loc->track_deg);
+    out[14] = (uint8_t)((uint16_t)loc->track_deg >> 8);
+    out[15] = 0; /* reserved */
+    return 16;
+}
+
+int ks_deserialize_rid_location(ks_rid_location_t *loc, const uint8_t *in)
+{
+    if (!loc || !in) return KS_ERR_NULL_POINTER;
+    loc->status       = in[0];
+    loc->lat          = unpack_int32(&in[1]);
+    loc->lon          = unpack_int32(&in[5]);
+    loc->geodetic_alt = (int16_t)((uint16_t)in[9] | ((uint16_t)in[10] << 8));
+    loc->speed        = unpack_uint16(&in[11]);
+    loc->track_deg    = (int16_t)((uint16_t)in[13] | ((uint16_t)in[14] << 8));
+    return 16;
 }
 
 /* --- Fragment Reassembly --- */

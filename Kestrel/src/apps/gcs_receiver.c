@@ -184,11 +184,42 @@ static void print_menu(void)
     fflush(stdout);
 }
 
-// Send a command packet to the UAV
-static int send_command_packet(int sock, struct sockaddr_in *dest,
-                               const ks_header_t *header, const uint8_t *payload,
-                               ks_mempool_t *pool, ks_session_t *session,
-                               ks_crypto_ctx_t *crypto_ctx)
+/* --- DO-377A Sliding Window Command Pipeline --- */
+#define DO_377A_MAX_WINDOW_SIZE 4
+#define DO_377A_MAX_RETRIES 3
+#define CMD_QUEUE_SIZE 256
+
+typedef struct
+{
+    ks_header_t header;
+    uint8_t payload[256]; /* KS_FRAG_MAX_PAYLOAD */
+    uint16_t cmd_id;      /* For logging */
+} queued_cmd_t;
+
+typedef struct
+{
+    bool active;
+    uint32_t send_time_ms;
+    uint16_t sequence;
+    uint16_t msg_id;
+    uint16_t cmd_id;
+    uint8_t retries;
+    ks_header_t header;
+    uint8_t payload[256];
+} in_flight_cmd_t;
+
+static queued_cmd_t cmd_queue[CMD_QUEUE_SIZE];
+static int cmd_queue_head = 0;
+static int cmd_queue_tail = 0;
+
+static in_flight_cmd_t g_cmd_window[DO_377A_MAX_WINDOW_SIZE] = {0};
+static uint8_t in_flight_count = 0;
+
+/* Send immediately without queuing (used by ECDH and the window dispatcher) */
+static int send_packet_direct(int sock, struct sockaddr_in *dest,
+                              const ks_header_t *header, const uint8_t *payload,
+                              ks_mempool_t *pool, ks_session_t *session,
+                              ks_crypto_ctx_t *crypto_ctx)
 {
     uint8_t *packet_buf = NULL;
     int packet_len = ks_pack_fast(pool, header, payload, session,
@@ -202,6 +233,129 @@ static int send_command_packet(int sock, struct sockaddr_in *dest,
         return packet_len;
     }
     return -1;
+}
+
+// Send a command packet to the UAV
+static int send_command_packet(int sock, struct sockaddr_in *dest,
+                               const ks_header_t *header, const uint8_t *payload,
+                               ks_mempool_t *pool, ks_session_t *session,
+                               ks_crypto_ctx_t *crypto_ctx)
+{
+    /* Bypass window for handshake */
+    if (header->msg_id == KS_MSG_KEY_EXCHANGE || header->msg_id == KS_MSG_KEY_EXCHANGE_ACK)
+    {
+        return send_packet_direct(sock, dest, header, payload, pool, session, crypto_ctx);
+    }
+
+    /* Enqueue to sliding window */
+    if (((cmd_queue_tail + 1) % CMD_QUEUE_SIZE) == cmd_queue_head)
+    {
+        printf(">>> ERR: Command queue full!\n");
+        return -1;
+    }
+
+    queued_cmd_t *q = &cmd_queue[cmd_queue_tail];
+    q->header = *header;
+    memcpy(q->payload, payload, header->payload_len);
+    
+    /* Attempt to extract command ID for logging if it's a KS_MSG_CMD */
+    if (header->msg_id == KS_MSG_CMD && header->payload_len >= 2) {
+        q->cmd_id = payload[0] | (payload[1] << 8);
+    } else {
+        q->cmd_id = 0;
+    }
+
+    cmd_queue_tail = (cmd_queue_tail + 1) % CMD_QUEUE_SIZE;
+    return header->payload_len; /* Pretend we sent it successfully */
+}
+
+/* Dispatch queued commands into empty window slots and handle timeouts */
+static void process_sliding_window(int sock, struct sockaddr_in *dest,
+                                   ks_mempool_t *pool, ks_session_t *session,
+                                   ks_crypto_ctx_t *crypto_ctx)
+{
+    if (!g_session_ready) return;
+
+    uint32_t now = get_time_ms();
+    uint8_t window_limit = session->window_size > 0 ? session->window_size : 1;
+    if (window_limit > DO_377A_MAX_WINDOW_SIZE) window_limit = DO_377A_MAX_WINDOW_SIZE;
+    
+    uint16_t ack_timeout = session->ack_timeout_ms > 0 ? session->ack_timeout_ms : 500;
+
+    /* 1. Handle Timeouts & Retransmissions */
+    for (int i = 0; i < DO_377A_MAX_WINDOW_SIZE; i++)
+    {
+        if (g_cmd_window[i].active)
+        {
+            if ((now - g_cmd_window[i].send_time_ms) > ack_timeout)
+            {
+                if (g_cmd_window[i].retries >= DO_377A_MAX_RETRIES)
+                {
+                    printf("\n>>> DO-377A: Slot %d OUT OF RETRIES for Seq=%u. Dropping.\n>>> ", i, g_cmd_window[i].sequence);
+                    g_cmd_window[i].active = false;
+                    in_flight_count--;
+                    fflush(stdout);
+                }
+                else
+                {
+                    g_cmd_window[i].retries++;
+                    g_cmd_window[i].send_time_ms = now;
+                    printf("\n>>> DO-377A: Timeout Seq=%u in Slot %d, Retransmitting (%d/%d)...\n>>> ", 
+                           g_cmd_window[i].sequence, i, g_cmd_window[i].retries, DO_377A_MAX_RETRIES);
+                    fflush(stdout);
+                    send_packet_direct(sock, dest, &g_cmd_window[i].header, g_cmd_window[i].payload, pool, session, crypto_ctx);
+                }
+            }
+        }
+    }
+
+    /* 2. Dispatch New Commands into Empty Slots */
+    while (in_flight_count < window_limit && cmd_queue_head != cmd_queue_tail)
+    {
+        /* Find empty slot */
+        int slot = -1;
+        for (int i = 0; i < window_limit; i++) {
+            if (!g_cmd_window[i].active) { slot = i; break; }
+        }
+        if (slot == -1) break; /* Should not happen if in_flight_count is correct but safeguard */
+
+        /* Pop from queue */
+        queued_cmd_t *q = &cmd_queue[cmd_queue_head];
+        cmd_queue_head = (cmd_queue_head + 1) % CMD_QUEUE_SIZE;
+
+        /* Store in window */
+        g_cmd_window[slot].active = true;
+        g_cmd_window[slot].send_time_ms = now;
+        g_cmd_window[slot].sequence = q->header.sequence;
+        g_cmd_window[slot].msg_id = q->header.msg_id;
+        g_cmd_window[slot].cmd_id = q->cmd_id;
+        g_cmd_window[slot].retries = 0;
+        g_cmd_window[slot].header = q->header;
+        memcpy(g_cmd_window[slot].payload, q->payload, q->header.payload_len);
+        in_flight_count++;
+
+        int sent = send_packet_direct(sock, dest, &q->header, q->payload, pool, session, crypto_ctx);
+        if (sent > 0)
+        {
+            printf("\n--- DO-377A: Dispatched Seq=%u to Slot %d limit=%u/%u ---\n>>> ", 
+                   q->header.sequence, slot, in_flight_count, window_limit);
+            fflush(stdout);
+        }
+    }
+}
+
+/* Remove acknowledged command from window */
+static void acknowledge_command(uint16_t seq)
+{
+    for (int i = 0; i < DO_377A_MAX_WINDOW_SIZE; i++)
+    {
+        if (g_cmd_window[i].active && g_cmd_window[i].sequence == seq)
+        {
+            g_cmd_window[i].active = false;
+            in_flight_count--;
+            break;
+        }
+    }
 }
 
 // Send a generic command (arm, disarm, takeoff, land, etc.)
@@ -824,6 +978,12 @@ int main(int argc, char *argv[])
         skip_input:;
         }
 
+        /* Process DO-377A Command Pipeline (if session established) */
+        if (ecdh_state == KS_ECDH_ESTABLISHED)
+        {
+            process_sliding_window(cmd_sock, &uav_cmd_addr, &pool, &g_session, &crypto_ctx);
+        }
+
         // --- Receive telemetry + ACKs (non-blocking) ---
         struct sockaddr_in sender_addr;
         int sender_len = sizeof(sender_addr);
@@ -1093,12 +1253,25 @@ int main(int argc, char *argv[])
                     acks_received++;
                     ks_command_ack_t ack;
                     ks_deserialize_command_ack(&ack, parse_output);
+                    
+                    /* The UAV currently doesn't echo the sequence number in the raw ACK payload,
+                     * but Kestrel uses the header sequence for ACKs in advanced extensions. 
+                     * For now, we clear the first matching command_id from the window 
+                     * since the protocol's basic ACK lacks sequence reflection. */
+                    for (int i = 0; i < DO_377A_MAX_WINDOW_SIZE; i++)
+                    {
+                        if (g_cmd_window[i].active && g_cmd_window[i].msg_id == KS_MSG_CMD && g_cmd_window[i].cmd_id == ack.command_id)
+                        {
+                            acknowledge_command(g_cmd_window[i].sequence);
+                            break;
+                        }
+                    }
+
                     printf("[ACK] Cmd=0x%04X Result=%s",
                            ack.command_id, get_ack_result(ack.result));
                     if (ack.result == KS_ACK_IN_PROGRESS)
                         printf(" Progress=%u%%", ack.progress);
-                    printf("\n");
-                    printf(">>> ");
+                    printf("\n>>> ");
                     fflush(stdout);
                     break;
                 }

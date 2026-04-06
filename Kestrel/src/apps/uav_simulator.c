@@ -8,6 +8,7 @@
 
 #include "kestrel.h"
 #include "kestrel_fast.h"
+#include "kestrel_rid.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -101,6 +102,20 @@ static uint32_t ecdh_retry_count = 0;    // Number of retries
 static uint32_t ecdh_last_send_time = 0; // For exponential backoff
 static uint32_t ecdh_timeout_ms = 5000;  /* One hour on this planet = 7 years of waiting — Interstellar */
 
+/* DO-362A: Configurable lost-link failsafe (set by GCS via heartbeat).
+ * Defaults: RTL after 3 seconds — identical to prior hard-coded behaviour. */
+static uint8_t  g_failsafe_action      = 2;   /* 0=none 1=Land 2=RTL 3=Hover */
+static uint16_t g_failsafe_timeout_s   = 3;   /* seconds of silence */
+
+/* DGCA NPNT arming gate state.
+ * If g_npnt_enabled is false (DGCA key file absent) NPNT is gracefully disabled
+ * and arming proceeds without a PA check — non-India deployments are unaffected. */
+static bool     g_npnt_enabled       = false; /* true once DGCA pub key loaded  */
+static bool     g_npnt_validated     = false; /* true once a valid PA verified  */
+static uint32_t g_npnt_valid_until   = 0;     /* PA expiry (Unix UTC)           */
+static uint8_t  g_dgca_pub[32]       = {0};   /* Pre-shared DGCA Ed25519 pubkey */
+static ks_npnt_pa_t g_npnt_pa        = {0};   /* Last received PA (for logging) */
+
 // Flight mode name lookup
 static const char *mode_names[] = {
     "MANUAL", "STABILIZE", "ALT_HOLD", "LOITER",
@@ -188,6 +203,14 @@ static ks_command_ack_t process_command(uav_state_t *state, const ks_command_t *
     switch (cmd->command_id)
     {
     case KS_CMD_ARM:
+        /* DGCA NPNT gate: if NPNT is enabled, PA must be validated first */
+        if (g_npnt_enabled && !g_npnt_validated)
+        {
+            ack.result = KS_ACK_REJECTED;
+            printf("  >>> NPNT GATE: ARM rejected — no valid Permission Artifact!\n");
+            printf("  >>> Push KS_MSG_NPNT_PA from GCS before arming.\n");
+            return ack;
+        }
         if (!state->armed)
         {
             state->armed = true;
@@ -359,6 +382,10 @@ int main(int argc, char *argv[])
 
     crypto_eddsa_key_pair(uav_id_secret, uav_id_public, uav_id_seed);
     printf("Identity loaded: EdDSA Keys loaded successfully\n");
+
+    /* Initialize ASTM F3411 Remote ID Module */
+    ks_rid_init("KESTREL-UAV-001");
+    printf("ASTM F3411: Remote ID Module Initialized.\n");
 
     // Initialize systems
     ks_mempool_t pool;
@@ -824,6 +851,108 @@ int main(int argc, char *argv[])
                     default:
                         printf("Unknown msg_id=0x%03X\n", hdr.msg_id);
                         break;
+                    case KS_MSG_NPNT_PA:
+                    {
+                        /* DGCA NPNT Permission Artifact handler */
+                        if (!g_npnt_enabled)
+                        {
+                            printf("  [NPNT] DGCA key not loaded — NPNT disabled, PA ignored.\n");
+                            break;
+                        }
+
+                        ks_npnt_pa_t pa;
+                        if (ks_deserialize_npnt_pa(&pa, parse_buf) != 82)
+                        {
+                            printf("  [NPNT] Malformed PA payload length.\n");
+                            break;
+                        }
+
+                        /* Build the signed body: [valid_from|valid_until|lat|lon|radius] */
+                        uint8_t body[18];
+                        body[0]  = (uint8_t)(pa.valid_from);
+                        body[1]  = (uint8_t)(pa.valid_from >> 8);
+                        body[2]  = (uint8_t)(pa.valid_from >> 16);
+                        body[3]  = (uint8_t)(pa.valid_from >> 24);
+                        body[4]  = (uint8_t)(pa.valid_until);
+                        body[5]  = (uint8_t)(pa.valid_until >> 8);
+                        body[6]  = (uint8_t)(pa.valid_until >> 16);
+                        body[7]  = (uint8_t)(pa.valid_until >> 24);
+                        body[8]  = (uint8_t)(pa.center_lat);
+                        body[9]  = (uint8_t)(pa.center_lat >> 8);
+                        body[10] = (uint8_t)(pa.center_lat >> 16);
+                        body[11] = (uint8_t)(pa.center_lat >> 24);
+                        body[12] = (uint8_t)(pa.center_lon);
+                        body[13] = (uint8_t)(pa.center_lon >> 8);
+                        body[14] = (uint8_t)(pa.center_lon >> 16);
+                        body[15] = (uint8_t)(pa.center_lon >> 24);
+                        body[16] = (uint8_t)(pa.radius_m);
+                        body[17] = (uint8_t)(pa.radius_m >> 8);
+
+                        /* Hash and verify signature */
+                        uint8_t h[64];
+                        crypto_blake2b(h, 64, body, 18);
+                        if (crypto_eddsa_check(pa.signature, g_dgca_pub, h, 64) != 0)
+                        {
+                            printf(RED "  [NPNT] INVALID SIGNATURE — PA rejected!\n" RESET);
+                            g_npnt_validated = false;
+                            break;
+                        }
+
+                        /* Check time validity */
+                        uint32_t now_utc = (uint32_t)time(NULL);
+                        if (now_utc < pa.valid_from || now_utc > pa.valid_until)
+                        {
+                            printf(RED "  [NPNT] PA EXPIRED or not yet valid.\n" RESET);
+                            g_npnt_validated = false;
+                            break;
+                        }
+
+                        /* Geofence check: rough distance using lat/lon deltas.
+                         * 1 degree lat = ~111 km; good enough for gate checking. */
+                        float dlat = (float)(state.lat - pa.center_lat) / 1e7f * 111000.0f;
+                        float dlon = (float)(state.lon - pa.center_lon) / 1e7f * 111000.0f;
+                        float dist_m = sqrtf(dlat * dlat + dlon * dlon);
+                        if (dist_m > (float)pa.radius_m)
+                        {
+                            printf(RED "  [NPNT] OUTSIDE GEOFENCE (%.0fm from centre, limit %um)\n" RESET,
+                                   dist_m, pa.radius_m);
+                            g_npnt_validated = false;
+                            break;
+                        }
+
+                        /* All checks passed */
+                        g_npnt_pa        = pa;
+                        g_npnt_valid_until = pa.valid_until;
+                        g_npnt_validated = true;
+                        printf(GREEN "  [NPNT] Permission Artifact VALIDATED. Arming gate OPEN.\n" RESET);
+                        printf("  [NPNT] Valid until %u | Fence radius %um | Dist %.0fm\n",
+                               pa.valid_until, pa.radius_m, dist_m);
+
+                        /* Send NPNT_STATUS reply */
+                        ks_npnt_status_t st = {0};
+                        st.status      = 0; /* OK */
+                        st.valid_until = pa.valid_until;
+                        uint8_t st_payload[5];
+                        int st_len = ks_serialize_npnt_status(&st, st_payload);
+                        ks_header_t st_hdr = {0};
+                        st_hdr.payload_len  = st_len;
+                        st_hdr.priority     = KS_PRIO_HIGH;
+                        st_hdr.stream_type  = KS_STREAM_NPNT;
+                        st_hdr.encrypted    = true;
+                        st_hdr.sequence     = state.sequence++;
+                        st_hdr.sys_id = 1; st_hdr.comp_id = 1;
+                        st_hdr.target_sys_id = 255;
+                        st_hdr.msg_id = KS_MSG_NPNT_STATUS;
+                        uint8_t *st_buf = NULL;
+                        int st_pkt = ks_pack_fast(&pool, &st_hdr, st_payload,
+                                                  &g_session, &crypto_ctx, &st_buf);
+                        if (st_pkt > 0 && st_buf) {
+                            sendto(telem_sock, (char *)st_buf, st_pkt, 0,
+                                   (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
+                            ks_mempool_free(&pool, st_buf);
+                        }
+                        break;
+                    }
                     }
                 }
 
@@ -843,11 +972,22 @@ int main(int argc, char *argv[])
                 state.yaw -= 360.0f;
             state.voltage -= 1;
 
-            // Failsafe Check: 3 seconds without a message (30 ticks at 100ms)
-            if ((loop - last_gcs_msg_time) > 30 && state.flight_mode != KS_MODE_RTL && state.flight_mode != KS_MODE_LAND)
+            /* DO-362A configurable failsafe: honour timeout/action from GCS heartbeat */
+            uint32_t silence_ticks = (uint32_t)(loop - last_gcs_msg_time);
+            uint32_t timeout_ticks = (uint32_t)g_failsafe_timeout_s * 10; /* 10 ticks/s */
+            if (silence_ticks > timeout_ticks &&
+                state.flight_mode != KS_MODE_RTL &&
+                state.flight_mode != KS_MODE_LAND)
             {
-                printf("\n>>> FAILSAFE TRIGGERED: Link Lost! Auto-RTL engaged. <<<\n\n");
-                state.flight_mode = KS_MODE_RTL;
+                printf("\n>>> DO-362A FAILSAFE: Link lost for %us! Action=%u <<<\n\n",
+                       g_failsafe_timeout_s, g_failsafe_action);
+                switch (g_failsafe_action) {
+                    case 1: state.flight_mode = KS_MODE_LAND;  break;
+                    case 3: /* Hover — stay in current mode but stop cmds */ break;
+                    default: /* 0=none keeps flying; 2=RTL (default) */
+                        state.flight_mode = KS_MODE_RTL;
+                        break;
+                }
             }
         }
 
@@ -1033,6 +1173,60 @@ int main(int argc, char *argv[])
                        (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
                 ks_mempool_free(&pool, packet_buf);
                 packets_sent++;
+            }
+        }
+
+        // ASTM F3411 Remote ID (1 Hz)
+        if (loop % 10 == 0)
+        {
+            uint8_t basic_buf[64];
+            uint8_t loc_buf[64];
+            int basic_len = 0, loc_len = 0;
+
+            uint16_t speed = (uint16_t)sqrt(state.roll_rate * state.roll_rate + state.pitch_rate * state.pitch_rate); // mock speed
+            uint8_t rid_status = state.armed ? 0x02 : 0x01; // 1=Ground, 2=Airborne
+
+            if (ks_rid_generate_payloads(basic_buf, &basic_len, loc_buf, &loc_len,
+                                         state.lat, state.lon, (int16_t)(state.alt / 1000), // convert mm to m
+                                         speed, 0, rid_status) == 0)
+            {
+                /* Broadcast Basic ID */
+                ks_header_t hdr_basic = {0};
+                hdr_basic.payload_len = basic_len;
+                hdr_basic.priority = KS_PRIO_NORMAL;
+                hdr_basic.stream_type = KS_STREAM_TELEM_SLOW; /* Or custom Unencrypted stream */
+                hdr_basic.encrypted = false;  /* F3411 RID is explicitly unencrypted broadcast */
+                hdr_basic.sequence = state.sequence++;
+                hdr_basic.sys_id = 1;
+                hdr_basic.comp_id = 1;
+                hdr_basic.msg_id = KS_MSG_RID_BASIC_ID;
+
+                uint8_t *p_buf = NULL;
+                int p_len = ks_pack_fast(&pool, &hdr_basic, basic_buf, NULL, &crypto_ctx, &p_buf);
+                if (p_len > 0 && p_buf) {
+                    sendto(telem_sock, (char *)p_buf, p_len, 0, (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
+                    ks_mempool_free(&pool, p_buf);
+                    packets_sent++;
+                }
+
+                /* Broadcast Location */
+                ks_header_t hdr_loc = {0};
+                hdr_loc.payload_len = loc_len;
+                hdr_loc.priority = KS_PRIO_NORMAL;
+                hdr_loc.stream_type = KS_STREAM_TELEM_SLOW;
+                hdr_loc.encrypted = false; /* F3411 RID must be open */
+                hdr_loc.sequence = state.sequence++;
+                hdr_loc.sys_id = 1;
+                hdr_loc.comp_id = 1;
+                hdr_loc.msg_id = KS_MSG_RID_LOCATION;
+
+                p_buf = NULL;
+                p_len = ks_pack_fast(&pool, &hdr_loc, loc_buf, NULL, &crypto_ctx, &p_buf);
+                if (p_len > 0 && p_buf) {
+                    sendto(telem_sock, (char *)p_buf, p_len, 0, (struct sockaddr *)&gcs_telem_addr, sizeof(gcs_telem_addr));
+                    ks_mempool_free(&pool, p_buf);
+                    packets_sent++;
+                }
             }
         }
 

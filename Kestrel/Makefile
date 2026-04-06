@@ -10,7 +10,8 @@ BIN_DIR = bin
 # Core Protocol Files
 CORE_SRC = $(SRC_CORE)/kestrel.c $(SRC_CORE)/kestrel_fast.c $(SRC_CORE)/kestrel_compress.c \
            $(SRC_CORE)/kestrel_hw_crypto.c $(SRC_CORE)/monocypher.c $(SRC_CORE)/kestrel_keymanager.c \
-           $(SRC_CORE)/kestrel_legion.c
+           $(SRC_CORE)/kestrel_legion.c $(SRC_CORE)/kestrel_rid.c
+
 
 # Platform-specific flags
 ifeq ($(OS),Windows_NT)
