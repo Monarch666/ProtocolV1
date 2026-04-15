@@ -71,7 +71,12 @@ static void secure_random(uint8_t *buf, size_t len)
     FILE *f = fopen("/dev/urandom", "rb");
     if (f)
     {
-        fread(buf, 1, len, f);
+        if (fread(buf, 1, len, f) != len)
+        {
+            fprintf(stderr, "FATAL: /dev/urandom short read\n");
+            fclose(f);
+            exit(1);
+        }
         fclose(f);
     }
     else
