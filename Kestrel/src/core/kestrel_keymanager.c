@@ -439,3 +439,106 @@ int ks_atomic_key_rotate(ks_session_t *session, const uint8_t new_key[32])
 
     return result;
 }
+
+/* ==========================================================================
+ * IEC 62443-4-2 CR 1.5 — Key Lifecycle Functions
+ *
+ * Key ID derivation: XOR-fold all 32 key bytes into one byte.
+ * Deterministic, stateless, correlatable across reboots — aligns with the
+ * Kestrel protocol philosophy of "zero implicit state where possible".
+ * ======================================================================== */
+
+static uint8_t derive_key_id(const uint8_t key[32])
+{
+    uint8_t id = 0;
+    int i;
+    for (i = 0; i < 32; i++) {
+        id ^= key[i];
+    }
+    return id;
+}
+
+void ks_lc_init(ks_key_lifecycle_t *lc, const uint8_t key[32],
+                uint8_t origin, uint32_t lifetime_ms, uint32_t now_ms)
+{
+    if (lc == NULL || key == NULL) return;
+
+    memset(lc, 0, sizeof(ks_key_lifecycle_t));
+    lc->created_at_ms   = now_ms;
+    lc->max_lifetime_ms = lifetime_ms;
+    lc->last_used_ms    = now_ms;
+    lc->origin          = origin;
+    lc->sl_assert       = 2u; /* IEC 62443-4-2 Security Level 2 target */
+    lc->key_id          = derive_key_id(key);
+    lc->revoked         = false;
+}
+
+void ks_lc_touch_encrypt(ks_key_lifecycle_t *lc, uint32_t now_ms)
+{
+    if (lc == NULL) return;
+    lc->last_used_ms = now_ms;
+    lc->packets_encrypted++;
+}
+
+void ks_lc_touch_decrypt(ks_key_lifecycle_t *lc, uint32_t now_ms)
+{
+    if (lc == NULL) return;
+    lc->last_used_ms = now_ms;
+    lc->packets_decrypted++;
+}
+
+bool ks_lc_is_valid(const ks_key_lifecycle_t *lc, uint32_t now_ms)
+{
+    if (lc == NULL)             return false;
+    if (lc->revoked)            return false;
+
+    /* Expiry check (only when a finite lifetime is configured) */
+    if (lc->max_lifetime_ms > 0u &&
+        (now_ms - lc->created_at_ms) > lc->max_lifetime_ms) {
+        return false;
+    }
+
+    /* Crypto-wear limit: retire the key after ~16 million encryptions */
+    if (lc->packets_encrypted >= (uint64_t)KS_KEY_LIFECYCLE_MAX_PACKETS) {
+        return false;
+    }
+
+    return true;
+}
+
+bool ks_lc_assert_sl(const ks_key_lifecycle_t *lc, uint8_t required_sl)
+{
+    if (lc == NULL) return false;
+    return (lc->sl_assert >= required_sl);
+}
+
+int ks_generate_key_with_lifecycle(uint8_t key_out[32],
+                                   ks_key_lifecycle_t *lc_out,
+                                   uint32_t lifetime_ms,
+                                   uint32_t now_ms)
+{
+    if (key_out == NULL || lc_out == NULL) return -1;
+
+    if (ks_generate_random_key(key_out) != 0) return -1;
+
+    ks_lc_init(lc_out, key_out,
+               (uint8_t)KS_KEY_ORIGIN_GENERATED, lifetime_ms, now_ms);
+    return 0;
+}
+
+int ks_rotate_with_lifecycle(ks_session_t *session,
+                              const uint8_t new_key[32],
+                              ks_key_lifecycle_t *lc,
+                              uint32_t lifetime_ms,
+                              uint32_t now_ms)
+{
+    if (session == NULL || new_key == NULL || lc == NULL) return -1;
+
+    if (ks_atomic_key_rotate(session, new_key) != 0) return -1;
+
+    /* Preserve the origin across rotations (key was still derived the same way) */
+    uint8_t origin = lc->origin;
+    ks_lc_init(lc, new_key, origin, lifetime_ms, now_ms);
+
+    return 0;
+}

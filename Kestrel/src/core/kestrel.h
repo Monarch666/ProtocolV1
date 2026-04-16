@@ -110,6 +110,46 @@ typedef struct
 #define KS_MSG_RID_LOCATION    0x031 /* F3411 Location/Vector broadcast frame   */
 /* STANAG 4609 Video / MISB ST 0601 */
 #define KS_MSG_VIDEO_TS        0x042 /* MPEG-TS stream carrying Video + KLV     */
+/* IEC 62443-4-2 OT Cybersecurity Compliance */
+#define KS_MSG_KEY_REVOKE      0x080 /* GCS → UAV: revoke a session key by ID  */
+#define KS_MSG_AUDIT_QUERY     0x081 /* GCS → UAV: request audit log records   */
+#define KS_MSG_AUDIT_RECORD    0x082 /* UAV → GCS: streamed audit record reply */
+#define KS_MSG_SEC_STATUS      0x083 /* UAV → GCS: IEC 62443 security status   */
+
+/* CR 1.13: Security mode enforcement flags.
+ * OR these bits into a uint8_t security_mode field in the application layer.
+ * When a flag is set, the UAV MUST reject packets that violate the policy. */
+#define KS_SECMODE_ENFORCE_ENCRYPT  0x01u /* Reject unencrypted command packets  */
+#define KS_SECMODE_ENFORCE_AUTH     0x02u /* Reject unauthenticated sys_id       */
+#define KS_SECMODE_ENFORCE_SL2      0x04u /* Enforce SL-2 lifecycle record exists */
+
+/* --- IEC 62443-4-2 Wire Structs --- */
+
+/* KS_MSG_KEY_REVOKE: GCS instructs the UAV to revoke a specific session key.
+ * The Ed25519 signature prevents a spoofed revocation from a rogue node. */
+typedef struct {
+    uint8_t key_id;        /* XOR-folded ID of the key to revoke             */
+    uint8_t reason;        /* 0=compromised 1=expired 2=replaced 3=other     */
+    uint8_t signature[64]; /* Ed25519 sig by GCS authority (over key_id+reason) */
+} ks_key_revoke_t;         /* 66 bytes                                        */
+
+/* KS_MSG_AUDIT_QUERY: GCS requests audit records from the UAV.
+ * UAV responds with one or more KS_MSG_AUDIT_RECORD messages. */
+typedef struct {
+    uint32_t last_n;       /* Return this many most-recent records (0 = all) */
+    uint8_t  filter_event; /* 0 = all; non-zero = specific ks_audit_event_t  */
+} ks_audit_query_t;        /* 5 bytes                                         */
+
+/* KS_MSG_SEC_STATUS: IEC 62443-4-2 security summary pushed to GCS.
+ * Send periodically (e.g. every 30 s) alongside the normal heartbeat. */
+typedef struct {
+    uint8_t  sl_target;      /* Asserted SL level (KS_IEC62443_SL_TARGET)   */
+    uint16_t cr_status;      /* Bitmask of passing CRs (KS_CR*_* defines)   */
+    uint32_t audit_total;    /* Total audit events logged this session        */
+    bool     audit_overflow; /* true = audit ring overflowed (records lost)   */
+    bool     flood_active;   /* true = DoS flood currently active             */
+    bool     anomaly_active; /* true = link anomaly above threshold           */
+} ks_sec_status_t;           /* 10 bytes                                      */
 
 /* Command IDs (used in ks_command_t.command_id) */
 #define KS_CMD_ARM 0x0001       /* Arm motors */

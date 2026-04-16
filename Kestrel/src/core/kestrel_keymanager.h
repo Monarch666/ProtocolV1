@@ -153,4 +153,124 @@ void ks_keymanager_cleanup(void);
  */
 int ks_atomic_key_rotate(ks_session_t *session, const uint8_t new_key[32]);
 
+/* ==========================================================================
+ * IEC 62443-4-2 CR 1.5 — Key Lifecycle Management
+ *
+ * These types are defined in kestrel_keymanager.h because lifecycle tracking
+ * is a natural keymanager concern.  kestrel_iec62443.h includes this header
+ * so that the audit module can reference ks_key_lifecycle_t directly.
+ * ======================================================================== */
+
+/** Maximum packets encrypted per key before crypto-wear limit is reached. */
+#define KS_KEY_LIFECYCLE_MAX_PACKETS  (1UL << 24)  /* ~16 million packets       */
+
+/** Recommended key lifetime constants. */
+#define KS_KEY_LIFETIME_1H_MS    3600000UL  /* 1 hour  — short-haul flights   */
+#define KS_KEY_LIFETIME_8H_MS   28800000UL  /* 8 hours — long-endurance UAVs  */
+#define KS_KEY_LIFETIME_NONE           0UL  /* No expiry (manual rotation)    */
+
+/** How a session key was provisioned — recorded in the lifecycle for auditing. */
+typedef enum {
+    KS_KEY_ORIGIN_GENERATED = 0x01,  /* ks_generate_random_key()             */
+    KS_KEY_ORIGIN_FILE      = 0x02,  /* Loaded from file (ks_load_key_from_file) */
+    KS_KEY_ORIGIN_ENV       = 0x03,  /* Loaded from env  (ks_load_key_from_env)  */
+    KS_KEY_ORIGIN_EXCHANGE  = 0x04,  /* Derived via X25519 ECDH handshake    */
+} ks_key_origin_t;
+
+/**
+ * Key lifecycle record — tracks expiry, revocation, and cryptographic wear.
+ *
+ * Attach one of these to every session key.  Pass it to ks_lc_touch_encrypt()
+ * / ks_lc_touch_decrypt() on every crypto operation, and call ks_lc_is_valid()
+ * before encrypting to enforce CR 1.5 key expiry and revocation.
+ */
+typedef struct {
+    uint32_t created_at_ms;      /* Monotonic ms when key was provisioned     */
+    uint32_t max_lifetime_ms;    /* Max age in ms; 0 = no expiry              */
+    uint32_t last_used_ms;       /* ms timestamp of last encrypt/decrypt call */
+    uint64_t packets_encrypted;  /* Outbound crypto-wear counter              */
+    uint64_t packets_decrypted;  /* Inbound  crypto-wear counter              */
+    uint8_t  origin;             /* ks_key_origin_t                           */
+    bool     revoked;            /* Set true by GCS KS_MSG_KEY_REVOKE         */
+    uint8_t  key_id;             /* XOR-folded key ID for audit correlation   */
+    uint8_t  sl_assert;          /* Asserted SL level (2 = IEC 62443-4-2 SL2) */
+} ks_key_lifecycle_t;
+
+/**
+ * Initialise a key lifecycle record for a freshly provisioned key.
+ *
+ * @param lc          Lifecycle record to initialise
+ * @param key         The 32-byte session key (used only to derive key_id)
+ * @param origin      How the key was created (ks_key_origin_t)
+ * @param lifetime_ms Max permitted key age in ms (0 = no expiry)
+ * @param now_ms      Current monotonic timestamp in ms
+ */
+void ks_lc_init(ks_key_lifecycle_t *lc, const uint8_t key[32],
+                uint8_t origin, uint32_t lifetime_ms, uint32_t now_ms);
+
+/**
+ * Update last_used_ms and increment packets_encrypted.
+ * Call immediately after any successful encryption operation.
+ */
+void ks_lc_touch_encrypt(ks_key_lifecycle_t *lc, uint32_t now_ms);
+
+/**
+ * Update last_used_ms and increment packets_decrypted.
+ * Call immediately after any successful decryption operation.
+ */
+void ks_lc_touch_decrypt(ks_key_lifecycle_t *lc, uint32_t now_ms);
+
+/**
+ * CR 1.5: Check whether the key is still within its lifecycle bounds.
+ *
+ * Returns false if any of the following apply:
+ *   - lc->revoked is true
+ *   - max_lifetime_ms > 0 and the key has exceeded its maximum age
+ *   - packets_encrypted >= KS_KEY_LIFECYCLE_MAX_PACKETS (crypto-wear limit)
+ */
+bool ks_lc_is_valid(const ks_key_lifecycle_t *lc, uint32_t now_ms);
+
+/**
+ * CR 1.9: Assert that the key's declared SL meets or exceeds required_sl.
+ * Returns true if lc->sl_assert >= required_sl.
+ */
+bool ks_lc_assert_sl(const ks_key_lifecycle_t *lc, uint8_t required_sl);
+
+/**
+ * IEC 62443-4-2 CR 1.5: Generate a fresh key AND initialise its lifecycle.
+ *
+ * Combines ks_generate_random_key() + ks_lc_init() in one call.
+ * After success, log KS_AUDIT_KEY_GENERATED via ks_iec62443_audit().
+ *
+ * @param key_out      Output: 32-byte session key
+ * @param lc_out       Output: populated lifecycle record
+ * @param lifetime_ms  Max key age in ms (0 = no expiry)
+ * @param now_ms       Current monotonic timestamp in ms
+ * @return 0 on success, -1 on CSPRNG failure
+ */
+int ks_generate_key_with_lifecycle(uint8_t key_out[32],
+                                   ks_key_lifecycle_t *lc_out,
+                                   uint32_t lifetime_ms,
+                                   uint32_t now_ms);
+
+/**
+ * IEC 62443-4-2 CR 1.5: Atomically rotate a session key and reset its lifecycle.
+ *
+ * Wraps ks_atomic_key_rotate() and then re-initialises the lifecycle record
+ * for the new key (resets wear counters, updates created_at_ms).
+ * After success, log KS_AUDIT_KEY_ROTATED via ks_iec62443_audit().
+ *
+ * @param session      Active session to rotate (must be initialised)
+ * @param new_key      32-byte replacement key
+ * @param lc           Lifecycle record to reset for the new key
+ * @param lifetime_ms  Max age for the new key (0 = no expiry)
+ * @param now_ms       Current monotonic timestamp in ms
+ * @return 0 on success, -1 on bad arguments, uninitialised session, or CSPRNG
+ */
+int ks_rotate_with_lifecycle(ks_session_t *session,
+                              const uint8_t new_key[32],
+                              ks_key_lifecycle_t *lc,
+                              uint32_t lifetime_ms,
+                              uint32_t now_ms);
+
 #endif // KESTREL_KEYMANAGER_H

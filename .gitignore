@@ -57,6 +57,7 @@ Kestrel/_vm_keygen_tmp/
 Kestrel/wireshark/
 Kestrel/testing/crash-*
 Kestrel/testing/native_fuzzer
+Kestrel/logs
 
 # === Others ===
 msg_editor.py

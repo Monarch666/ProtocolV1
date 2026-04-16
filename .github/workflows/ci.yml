@@ -34,7 +34,7 @@ jobs:
 
     - name: Create output directories
       working-directory: ./Kestrel
-      run: mkdir -p bin testing
+      run: mkdir -p bin testing logs
 
     # ── Core build ──────────────────────────────────────────────────────────
     # -Werror promotes every warning to an error: any new warning in a PR
@@ -43,7 +43,7 @@ jobs:
       working-directory: ./Kestrel
       run: |
         make all CFLAGS="-Wall -Werror -O2 -Isrc/core"
-        echo "✅ All targets built successfully (0 warnings, 0 errors)"
+        echo "All targets built successfully (0 warnings, 0 errors)"
 
     # ── Verify expected binaries exist and are non-zero size ────────────────
     - name: Verify binary artefacts
@@ -51,10 +51,10 @@ jobs:
       run: |
         for BIN in bin/kestrel_benchmark bin/gcs_receiver bin/uav_simulator bin/key_example; do
           if [ ! -s "$BIN" ]; then
-            echo "❌ Missing or empty binary: $BIN"
+            echo "Missing or empty binary: $BIN"
             exit 1
           fi
-          echo "✅ $BIN  ($(stat -c%s $BIN) bytes)"
+          echo "$BIN  ($(stat -c%s $BIN) bytes)"
         done
 
     # ── Packet size unit test ────────────────────────────────────────────────
@@ -71,16 +71,17 @@ jobs:
           src/core/monocypher.c \
           src/core/kestrel_keymanager.c \
           src/core/kestrel_sora.c \
+          src/core/kestrel_iec62443.c \
           -lm
         ./testing/packet_size_test
-        echo "✅ Packet size test passed"
+        echo "Packet size test passed"
 
     # ── Integration smoke test ───────────────────────────────────────────────
     - name: Run integration smoke test (1 min)
       working-directory: ./Kestrel
       run: |
         python3 testing/test_1min.py
-        echo "✅ Integration smoke test passed"
+        echo "Integration smoke test passed"
 
     # ── SORA compliance module test ───────────────────────────────────────────
     - name: Build and run SORA compliance unit test
@@ -98,10 +99,31 @@ jobs:
           src/core/kestrel_hw_crypto.c \
           src/core/monocypher.c \
           src/core/kestrel_keymanager.c \
+          src/core/kestrel_iec62443.c \
           testing/sora_unit_test.c \
           -lm
         ./testing/sora_test
-        echo "✅ SORA OSO#06 compliance test passed"
+        echo "SORA OSO#06 compliance test passed"
+
+    # ── IEC 62443-4-2 OT Cybersecurity compliance test ─────────────────────
+    - name: Build and run IEC 62443-4-2 compliance unit test
+      working-directory: ./Kestrel
+      run: |
+        mkdir -p logs
+        gcc -Wall -Werror -O2 -Isrc/core \
+          -o testing/iec62443_test \
+          testing/iec62443_unit_test.c \
+          src/core/kestrel.c \
+          src/core/kestrel_fast.c \
+          src/core/kestrel_compress.c \
+          src/core/kestrel_hw_crypto.c \
+          src/core/monocypher.c \
+          src/core/kestrel_keymanager.c \
+          src/core/kestrel_sora.c \
+          src/core/kestrel_iec62443.c \
+          -lm
+        ./testing/iec62443_test
+        echo "IEC 62443-4-2 OT Cybersecurity compliance test passed"
 
   # ─────────────────────────────────────────────────────────────────────────
   # Job 2: Windows cross-build validation
@@ -135,7 +157,7 @@ jobs:
           CFLAGS="-Wall -Werror -O2 -Isrc/core" \
           LDFLAGS="-lws2_32 -ladvapi32 -lm" \
           EXT=".exe"
-        echo "✅ Windows cross-compilation successful"
+        echo "Windows cross-compilation successful"
 
     - name: Verify Windows binary artefacts
       working-directory: ./Kestrel
@@ -143,10 +165,10 @@ jobs:
         for BIN in bin/kestrel_benchmark.exe bin/gcs_receiver.exe \
                    bin/uav_simulator.exe bin/key_example.exe; do
           if [ ! -s "$BIN" ]; then
-            echo "❌ Missing or empty binary: $BIN"
+            echo "Missing or empty binary: $BIN"
             exit 1
           fi
-          echo "✅ $BIN  ($(stat -c%s $BIN) bytes)"
+          echo "$BIN  ($(stat -c%s $BIN) bytes)"
         done
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -180,8 +202,9 @@ jobs:
           src/core/kestrel_sora.c \
           src/core/kestrel_rid.c \
           src/core/kestrel_legion.c \
+          src/core/kestrel_iec62443.c \
           2>&1 | tee cppcheck_report.txt
-        echo "✅ cppcheck passed on core modules"
+        echo "cppcheck passed on core modules"
       continue-on-error: true   # Advisory — won't block merge until baseline is clean
 
     - name: Upload cppcheck report
