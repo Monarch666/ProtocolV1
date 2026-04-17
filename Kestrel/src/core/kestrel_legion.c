@@ -393,30 +393,28 @@ uint8_t ksl_link_quality(const ksl_parser_t *p)
     return (uint8_t)(((uint64_t)p->rx_count * 100u) / total);
 }
 
-int ksl_check_replay(ksl_parser_t *p, uint16_t seq)
+int ksl_check_replay(ksl_parser_t *p, uint32_t seq)
 {
     if (!p) return KS_ERR_NULL_POINTER;
 
     if (p->replay_init)
     {
-        int16_t diff = (int16_t)(seq - p->last_seq);
-        if (diff >  2047) diff = (int16_t)(diff - 4096);
-        if (diff < -2048) diff = (int16_t)(diff + 4096);
+        int32_t diff = (int32_t)(seq - p->last_seq);
 
         if (diff <= 0)
         {
-            uint8_t offset = (uint8_t)(-diff);
+            int32_t back = -diff;
             /* Legion: 64-packet window */
-            if (offset >= 64 || (p->replay_window & (1ULL << offset)))
+            if (back >= 64 || (p->replay_window & (1ULL << (uint8_t)back)))
             {
                 p->error_count++;
                 return KS_ERR_REPLAY;
             }
-            p->replay_window |= (1ULL << offset);
+            p->replay_window |= (1ULL << (uint8_t)back);
         }
         else
         {
-            uint8_t shift = (uint8_t)diff;
+            uint32_t shift = (uint32_t)diff;
             p->replay_window = (shift >= 64) ? 0ULL : (p->replay_window << shift);
             p->replay_window |= 1ULL;
             p->last_seq = seq;
@@ -650,7 +648,20 @@ int ksl_parse_byte(ksl_parser_t *parser, uint8_t byte,
             seq |= (uint16_t)((parser->header_buf[4] << 2) & 0x3FC);
             seq |= (uint16_t)((parser->header_buf[5] >> 6) & 0x3);
 
-            int replay_rc = ksl_check_replay(parser, seq);
+            uint32_t replay_seq;
+            if (crc_encrypted)
+            {
+                replay_seq = (uint32_t)parser->cipher_nonce[0]
+                           | ((uint32_t)parser->cipher_nonce[1] << 8)
+                           | ((uint32_t)parser->cipher_nonce[2] << 16)
+                           | ((uint32_t)parser->cipher_nonce[3] << 24);
+            }
+            else
+            {
+                replay_seq = (uint32_t)seq;
+            }
+
+            int replay_rc = ksl_check_replay(parser, replay_seq);
             if (replay_rc != KS_OK)
             {
                 ksl_parser_init(parser);
@@ -675,7 +686,7 @@ int ksl_parse_byte(ksl_parser_t *parser, uint8_t byte,
             }
 
             parser->out_fragmented = parser->fragmented;
-            parser->out_sequence   = seq;
+            parser->out_sequence   = replay_seq;
             parser->last_payload   = output_buf;
 
             parser->state          = 0;

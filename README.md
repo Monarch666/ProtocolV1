@@ -857,7 +857,7 @@ while (uart_available()) {
         }
     }
     else if (result == KS_ERR_MAC_VERIFICATION) {
-        printf("⚠️ Tampered packet detected!\n");
+        printf("Tampered packet detected!\n");
     }
 }
 ```
@@ -935,7 +935,7 @@ typedef enum {
 7. **NULL Safety:** All public APIs validate pointer arguments
 8. **Buffer Protection:** Payload size validation prevents buffer overflows
 
-### 🔒 Recent Security Enhancements (February 2026)
+### Recent Security Enhancements (February 2026)
 
 **Full ChaCha20-Poly1305 AEAD Implementation:**
 
@@ -971,7 +971,7 @@ The protocol now features production-grade authenticated encryption:
 - No buffer overflows (bounds checking)
 - No NULL dereferences (comprehensive validation)
 
-### ⚠️ Production Recommendations
+### Production Recommendations
 
 1. **Key Management:**
    - Never hardcode keys in source code

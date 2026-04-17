@@ -159,7 +159,7 @@ typedef struct
 
     bool     fragmented;      /* Raw fragmented bit from base header      */
     bool     out_fragmented;  /* Fragmented flag for last completed packet */
-    uint16_t out_sequence;    /* Sequence number for last completed packet */
+    uint32_t out_sequence;    /* 32-bit anti-replay seq for last completed packet */
 
     /* Legion: decoded 13-bit address fields for last completed packet */
     uint16_t out_sys_id;
@@ -170,9 +170,11 @@ typedef struct
     uint16_t crc_in;          /* Incoming CRC from packet                 */
     uint16_t crc_calc;        /* Calculated CRC for validation            */
 
-    /* Replay protection — LEGION: uint64_t (64-packet window, was 32)   */
+    /* Replay protection — LEGION: uint64_t (64-packet window, was 32)
+     * last_seq holds the 32-bit nonce counter for encrypted packets, or the
+     * 12-bit wire sequence for unencrypted packets. */
     uint8_t  replay_init;
-    uint16_t last_seq;
+    uint32_t last_seq;        /* Highest accepted seq (nonce counter or 12-bit) */
     uint64_t replay_window;   /* KSL: widened from uint32_t               */
 
     /* Statistics */
@@ -204,7 +206,7 @@ int ksl_parse_byte(ksl_parser_t *parser, uint8_t byte,
  * Call AFTER MAC authentication.
  * @return 0 on success, KS_ERR_REPLAY if replay detected.
  */
-int ksl_check_replay(ksl_parser_t *parser, uint16_t seq);
+int ksl_check_replay(ksl_parser_t *parser, uint32_t seq);
 
 /**
  * Get link quality (0–100) based on rx_count vs error_count.

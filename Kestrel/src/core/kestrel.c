@@ -94,7 +94,19 @@ void ks_encode_base_header(uint8_t *buf, const ks_header_t *h)
 
     buf[2] = ((h->stream_type & 0x3) << 6) | (((h->payload_len >> 2) & 0x3F));
 
-    buf[3] = ((h->payload_len & 0x3) << 6) | ((h->encrypted ? 1 : 0) << 3) | ((h->fragmented ? 1 : 0) << 2) | ((h->sequence >> 10) & 0x3);
+    /* Byte 3 bit layout:
+     *   [7:6] payload_len[1:0]  (KS_PLEN_LO_MASK)
+     *   [5]   reserved
+     *   [4]   KS_FLAG_COMPRESSED  — LZ4 compressed before encryption
+     *   [3]   KS_FLAG_ENCRYPTED
+     *   [2]   KS_FLAG_FRAGMENTED
+     *   [1:0] sequence[11:10]   (KS_SEQ_HI_MASK)
+     */
+    buf[3] = ((h->payload_len  & 0x3) << 6)
+           | ((h->compressed   ? 1u : 0u) << 4)
+           | ((h->encrypted    ? 1u : 0u) << 3)
+           | ((h->fragmented   ? 1u : 0u) << 2)
+           | ((h->sequence >> 10) & 0x3);
 }
 
 int ks_decode_base_header(const uint8_t *buf, ks_header_t *h)
@@ -112,10 +124,16 @@ int ks_decode_base_header(const uint8_t *buf, ks_header_t *h)
     // buf[3] high 2 bits -> length [1:0]
     h->payload_len = ((uint16_t)(buf[1] >> 4) << 8) | ((uint16_t)(buf[2] & 0x3F) << 2) | (buf[3] >> 6);
 
-    h->priority = (buf[1] >> 2) & 0x3;
+    h->priority    = (buf[1] >> 2) & 0x3;
     h->stream_type = ((buf[1] & 0x3) << 2) | ((buf[2] >> 6) & 0x3);
-    h->encrypted = (buf[3] >> 3) & 0x1;
-    h->fragmented = (buf[3] >> 2) & 0x1;
+
+    h->compressed  = (buf[3] >> 4) & 0x1; /* KS_FLAG_COMPRESSED — bit 4 */
+    h->encrypted   = (buf[3] >> 3) & 0x1; /* KS_FLAG_ENCRYPTED  — bit 3 */
+    h->fragmented  = (buf[3] >> 2) & 0x1; /* KS_FLAG_FRAGMENTED — bit 2 */
+
+    /* original_payload_len is carried inside the payload (2-byte LE prefix);
+     * the decoder cannot know it yet at this point — zero-init for safety. */
+    h->original_payload_len = 0;
 
     h->sequence = (buf[3] & 0x3) << 10;
 
@@ -1349,23 +1367,32 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
                 memcpy(p->payload, p->buffer + header_size, p->header.payload_len);
             }
 
-            // Replay protection: 32-packet sliding window
+            /* Replay protection — 64-packet sliding window.
+             * For encrypted packets, use the 32-bit nonce counter from
+             * p->header.nonce[0..3] (little-endian). The nonce is MAC-
+             * authenticated at this point so it cannot be spoofed.
+             * For unencrypted packets, use the 12-bit wire sequence. */
             {
-                uint16_t seq = p->header.sequence;
+                uint32_t replay_seq;
+                if (p->header.encrypted)
+                {
+                    replay_seq = (uint32_t)p->header.nonce[0]
+                               | ((uint32_t)p->header.nonce[1] << 8)
+                               | ((uint32_t)p->header.nonce[2] << 16)
+                               | ((uint32_t)p->header.nonce[3] << 24);
+                }
+                else
+                {
+                    replay_seq = (uint32_t)p->header.sequence;
+                }
+
                 if (p->replay_init)
                 {
-                    int16_t diff = (int16_t)(seq - p->last_seq);
-                    // Handle 12-bit sequence wrap-around
-                    if (diff > 2047)
-                        diff -= 4096;
-                    else if (diff < -2048)
-                        diff += 4096;
-
+                    int32_t diff = (int32_t)(replay_seq - p->last_seq);
                     if (diff <= 0)
                     {
-                        /* Packet is older than or equal to the highest seen */
-                        uint8_t offset = (uint8_t)(-diff);
-                        if (offset >= 32 || (p->replay_window & (1UL << offset)))
+                        int32_t back = -diff;
+                        if (back >= 64 || (p->replay_window & (1ULL << (uint8_t)back)))
                         {
                             /* BUG-02 FIX: Return KS_ERR_REPLAY (not KS_ERR_CRC) so
                                callers can distinguish replay attacks from link errors. */
@@ -1373,22 +1400,22 @@ int ks_parse_char(ks_parser_t *p, uint8_t c, const uint8_t *key_32b)
                             p->error_count++;
                             return KS_ERR_REPLAY;
                         }
-                        p->replay_window |= (1UL << offset);
+                        p->replay_window |= (1ULL << (uint8_t)back);
                     }
                     else
                     {
-                        /* Newer packet — advance window */
-                        uint8_t shift = (uint8_t)diff;
-                        p->replay_window = (shift >= 32) ? 0 : (p->replay_window << shift);
-                        p->replay_window |= 1UL; /* Mark current seq */
-                        p->last_seq = seq;
+                        uint32_t shift = (uint32_t)diff;
+                        p->replay_window = (shift >= 64) ? 0ULL
+                                                         : (p->replay_window << shift);
+                        p->replay_window |= 1ULL;
+                        p->last_seq = replay_seq;
                     }
                 }
                 else
                 {
-                    p->replay_init = 1;
-                    p->last_seq = seq;
-                    p->replay_window = 1UL;
+                    p->replay_init   = 1;
+                    p->last_seq      = replay_seq;
+                    p->replay_window = 1ULL;
                 }
             }
 

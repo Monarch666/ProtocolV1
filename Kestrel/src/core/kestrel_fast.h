@@ -52,7 +52,7 @@ typedef struct
     /* Bug-B FIX fields: fragmented flag decoded from base header and exposed to callers */
     bool fragmented;         /* Raw fragmented bit from header_buf[3] */
     bool out_fragmented;     /* Fragmented flag for the most recently completed packet */
-    uint16_t out_sequence;   /* Sequence number for the most recently completed packet */
+    uint32_t out_sequence;   /* 32-bit anti-replay seq for last completed packet */
 
     /* Bug-1 FIX field: caller provides session key so the ZC parser can do MAC verify */
     const uint8_t *key_32b;  /* 32-byte session key (NULL = allow unencrypted only) */
@@ -61,10 +61,13 @@ typedef struct
     uint16_t crc_in;        // Incoming CRC from packet
     uint16_t crc_calc;      // Calculated CRC for validation
 
-    // Replay Protection
-    uint8_t replay_init;    // 1 if initialized
-    uint16_t last_seq;      // Highest accepted sequence number
-    uint32_t replay_window; // 32-bit sliding window bitmap
+    /* Replay protection — 64-packet sliding window.
+     * last_seq holds the 32-bit nonce counter for encrypted packets, or the
+     * 12-bit wire sequence for unencrypted packets.  replay_window is widened
+     * to uint64_t to support the deeper 64-packet window. */
+    uint8_t  replay_init;    /* 1 if initialized                              */
+    uint32_t last_seq;       /* Highest accepted seq (nonce counter or 12-bit) */
+    uint64_t replay_window;  /* 64-packet sliding window bitmap               */
 
     // Statistics
     uint32_t rx_count;    // Total valid packets parsed
@@ -83,7 +86,7 @@ void ks_parser_zerocopy_init(ks_parser_zerocopy_t *parser);
  * @param seq    Sequence number of the authenticated packet
  * @return 0 on success, negative if replay detected
  */
-int ks_check_replay_window(ks_parser_zerocopy_t *parser, uint16_t seq);
+int ks_check_replay_window(ks_parser_zerocopy_t *parser, uint32_t seq);
 
 /**
  * Get the link quality (0-100) based on rx_count and error_count.

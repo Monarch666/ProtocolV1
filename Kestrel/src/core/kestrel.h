@@ -37,10 +37,11 @@ typedef enum
 #define KS_PLEN_MID_MASK 0x3F /* bits 5:0 -> payload length [7:2] */
 
 /* Byte 3 */
-#define KS_PLEN_LO_MASK 0xC0    /* bits 7:6 -> payload length [1:0] */
-#define KS_FLAG_ENCRYPTED 0x08  /* bit 3 */
-#define KS_FLAG_FRAGMENTED 0x04 /* bit 2 */
-#define KS_SEQ_HI_MASK 0x03     /* bits 1:0 -> sequence [11:10] */
+#define KS_PLEN_LO_MASK 0xC0     /* bits 7:6 -> payload length [1:0]                       */
+#define KS_FLAG_COMPRESSED 0x10  /* bit 4   -> payload LZ4-compressed before encryption     */
+#define KS_FLAG_ENCRYPTED  0x08  /* bit 3                                                   */
+#define KS_FLAG_FRAGMENTED 0x04  /* bit 2                                                   */
+#define KS_SEQ_HI_MASK 0x03      /* bits 1:0 -> sequence [11:10]                            */
 
 /* Priority Values */
 #define KS_PRIO_BULK 0
@@ -64,24 +65,28 @@ typedef enum
 /* Parsed message header structure */
 typedef struct
 {
-    uint16_t payload_len; // 12-bit
-    uint8_t priority;     // 2-bit
-    uint8_t stream_type;  // 4-bit
-    bool encrypted;       // 1-bit
-    bool fragmented;      // 1-bit
-    uint16_t sequence;    // 12-bit
+    uint16_t payload_len;          /* 12-bit — wire payload size (may be compressed)         */
+    uint16_t original_payload_len; /* uncompressed size; valid only when compressed == true.  */
+                                   /* NOT transmitted in the base header — carried as a       */
+                                   /* 2-byte LE prefix inside the compressed payload itself.  */
+    uint8_t  priority;             /* 2-bit                                                   */
+    uint8_t  stream_type;          /* 4-bit                                                   */
+    bool     encrypted;            /* 1-bit                                                   */
+    bool     compressed;           /* 1-bit — set when LZ4 compressed before encryption       */
+    bool     fragmented;           /* 1-bit                                                   */
+    uint16_t sequence;             /* 12-bit                                                  */
 
-    // Extended Header
-    uint8_t sys_id;        // 6-bit
-    uint8_t comp_id;       // 4-bit
-    uint8_t target_sys_id; // 6-bit (0 = broadcast)
-    uint16_t msg_id;       // 12-bit
+    /* Extended Header */
+    uint8_t  sys_id;               /* 6-bit                                                   */
+    uint8_t  comp_id;              /* 4-bit                                                   */
+    uint8_t  target_sys_id;        /* 6-bit (0 = broadcast)                                   */
+    uint16_t msg_id;               /* 12-bit                                                  */
 
-    // Fragmentation fields
+    /* Fragmentation fields */
     uint8_t frag_index;
     uint8_t frag_total;
 
-    // Encryption nonces
+    /* Encryption nonce */
     uint8_t nonce[8];
 } ks_header_t;
 
@@ -205,10 +210,14 @@ typedef struct
     ks_header_t header;
     uint8_t payload[512]; // Must match buffer[512] to prevent overflow
 
-    /* Replay protection: 32-packet sliding window keyed on sequence number */
-    uint8_t replay_init;    /* 1 once first valid packet received */
-    uint16_t last_seq;      /* Highest accepted sequence number    */
-    uint32_t replay_window; /* Bitmap: bit i set => (last_seq - i) seen */
+    /* Replay protection: 64-packet sliding window.
+     * For encrypted packets, last_seq stores the 32-bit nonce counter, giving
+     * ~497 days of non-wrapping protection at 100 Hz (vs ~40 s for 12-bit).
+     * The nonce counter is MAC-authenticated, so it cannot be spoofed.
+     * For unencrypted packets, last_seq stores the 12-bit wire sequence. */
+    uint8_t  replay_init;    /* 1 once first valid packet received              */
+    uint32_t last_seq;       /* Highest accepted seq (nonce counter or 12-bit)  */
+    uint64_t replay_window;  /* Bitmap: bit i set => (last_seq - i) seen        */
 
     /* Statistics / Link Quality */
     uint32_t rx_count;    /* Total packets successfully received */

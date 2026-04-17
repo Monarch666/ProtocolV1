@@ -39,7 +39,7 @@ void ks_sora_init(ks_sora_ctx_t *ctx)
 
 void ks_sora_log(ks_sora_ctx_t *ctx, ks_sora_event_t event,
                  uint32_t timestamp_ms, uint8_t sys_id,
-                 uint16_t sequence, uint8_t result)
+                 uint32_t sequence, uint8_t result)
 {
     if (!ctx)
         return;
@@ -51,7 +51,10 @@ void ks_sora_log(ks_sora_ctx_t *ctx, ks_sora_event_t event,
     ctx->ring[slot].sys_id       = sys_id;
     ctx->ring[slot].sequence     = sequence;
     ctx->ring[slot].result       = result;
-    ctx->ring[slot]._pad         = 0;
+    ctx->ring[slot]._pad1        = 0;
+    ctx->ring[slot]._pad2[0]     = 0;
+    ctx->ring[slot]._pad2[1]     = 0;
+    ctx->ring[slot]._pad2[2]     = 0;
 
     ctx->head++;
     ctx->total_logged++;
@@ -70,7 +73,7 @@ void ks_sora_log(ks_sora_ctx_t *ctx, ks_sora_event_t event,
 }
 
 void ks_sora_on_parse_result(ks_sora_ctx_t *ctx, int parse_result,
-                             uint8_t sys_id, uint16_t sequence,
+                             uint8_t sys_id, uint32_t sequence,
                              uint32_t timestamp_ms)
 {
     if (!ctx)
@@ -173,8 +176,8 @@ void ks_sora_dump(const ks_sora_ctx_t *ctx)
     }
     else
     {
-        printf("║  #   Timestamp(ms) Event            Sys  Seq  Err           ║\n");
-        printf("║  ─── ──────────── ──────────────── ──── ──── ───           ║\n");
+        printf("║  #   Timestamp(ms) Event            Sys  Seq         Err   ║\n");
+        printf("║  ─── ──────────── ──────────────── ──── ────────── ───     ║\n");
 
         /* Walk from oldest entry to newest */
         uint32_t start = (ctx->total_logged >= KS_SORA_RING_SIZE)
@@ -185,7 +188,7 @@ void ks_sora_dump(const ks_sora_ctx_t *ctx)
         {
             uint32_t idx = (start + i) & (KS_SORA_RING_SIZE - 1u);
             const ks_sora_record_t *r = &ctx->ring[idx];
-            printf("║  %-3u %11u %s  %3u  %4u  %3u          ║\n",
+            printf("║  %-3u %11u %s  %3u  %10u  %3u          ║\n",
                    i + 1,
                    r->timestamp_ms,
                    sora_event_name((ks_sora_event_t)r->event),

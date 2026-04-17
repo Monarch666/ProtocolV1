@@ -63,10 +63,11 @@ typedef struct {
     uint32_t timestamp_ms;            /* Monotonic millisecond timestamp      */
     uint8_t  event;                   /* ks_sora_event_t value                */
     uint8_t  sys_id;                  /* Source system ID (UAV=1, GCS=255)    */
-    uint16_t sequence;                /* Packet sequence number at event time */
+    uint16_t _pad1;                   /* Alignment padding                    */
+    uint32_t sequence;                /* 32-bit packet sequence/nonce counter */
     uint8_t  result;                  /* 0=OK / non-zero=error code           */
-    uint8_t  _pad;                    /* Alignment padding                    */
-} ks_sora_record_t;                   /* 10 bytes per record                  */
+    uint8_t  _pad2[3];                /* Alignment padding                    */
+} ks_sora_record_t;                   /* 16 bytes per record                  */
 
 /* ---- Compliance Context ---- */
 typedef struct {
@@ -117,7 +118,7 @@ void ks_sora_init(ks_sora_ctx_t *ctx);
  */
 void ks_sora_log(ks_sora_ctx_t *ctx, ks_sora_event_t event,
                  uint32_t timestamp_ms, uint8_t sys_id,
-                 uint16_t sequence, uint8_t result);
+                 uint32_t sequence, uint8_t result);
 
 /**
  * Convenience helper: call this directly with the return value of
@@ -131,7 +132,7 @@ void ks_sora_log(ks_sora_ctx_t *ctx, ks_sora_event_t event,
  * @param timestamp_ms Current time
  */
 void ks_sora_on_parse_result(ks_sora_ctx_t *ctx, int parse_result,
-                             uint8_t sys_id, uint16_t sequence,
+                             uint8_t sys_id, uint32_t sequence,
                              uint32_t timestamp_ms);
 
 /**

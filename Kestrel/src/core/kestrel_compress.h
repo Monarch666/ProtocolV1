@@ -261,24 +261,37 @@ int ks_delta_decode_battery(ks_delta_ctx_t *ctx, const uint8_t *delta_data,
  * ============================================================================= */
 
 /**
- * Pack with all Phase 3 optimizations:
- * - LZ4 compression (if beneficial)
- * - Delta encoding (for telemetry)
- * - FEC parity generation (if enabled)
- * - Plus Phase 1 + 2 (selective encryption, zero-copy, memory pool)
+ * Pack with all Phase 3 optimizations in the correct Compress-Then-Encrypt order:
  *
- * @param header Message header
- * @param payload Payload data
- * @param payload_len Payload length
- * @param delta_ctx Delta encoder (NULL to disable)
- * @param fec_encoder FEC encoder (NULL to disable)
- * @param output Output buffer
- * @param max_output Maximum output size
- * @return Packed size, or negative on error
+ *   Plaintext -> [LZ4 compress if beneficial] -> staging buffer
+ *                                                      |
+ *                                              kestrel_pack_with_nonce()
+ *                                                      |
+ *                                          [ChaCha20-Poly1305 AEAD] -> wire bytes
+ *
+ * Steps applied:
+ *   1. ks_should_compress() probe — skip if payload is < 32 B or low entropy.
+ *   2. ks_lz4_compress() into a staging buffer; 2-byte LE original-length prefix.
+ *   3. KS_FLAG_COMPRESSED set in the base header (bit 4 of Byte 3).
+ *   4. kestrel_pack_with_nonce() encrypts the (possibly compressed) staging
+ *      buffer and appends the Poly1305 MAC + CRC.
+ *
+ * SECURITY: Compression happens strictly BEFORE encryption (correct order).
+ * See the CRIME/BREACH mitigation note inside the implementation.
+ *
+ * @param header       Message header (payload_len = uncompressed length)
+ * @param payload      Plaintext payload data
+ * @param payload_len  Plaintext payload length
+ * @param delta_ctx    Delta encoder (NULL to disable)
+ * @param fec_encoder  FEC encoder (NULL to disable)
+ * @param session      Crypto session for encryption (NULL = unencrypted)
+ * @param output       Output buffer for the final wire packet
+ * @param max_output   Maximum output buffer size
+ * @return             Final packet length on success, negative on error
  */
 int ks_pack_phase3(const ks_header_t *header, const uint8_t *payload, size_t payload_len,
                    ks_delta_ctx_t *delta_ctx, ks_fec_encoder_t *fec_encoder,
-                   uint8_t *output, size_t max_output);
+                   ks_session_t *session, uint8_t *output, size_t max_output);
 
 /**
  * Parse with Phase 3 decompression and decoding

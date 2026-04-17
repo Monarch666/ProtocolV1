@@ -25,6 +25,7 @@ int test_address_space() {
     assert(len > 0);
     
     ksl_parser_t parser;
+    memset(&parser, 0, sizeof(parser));
     ksl_parser_init(&parser);
     
     uint8_t output[256];
@@ -85,6 +86,7 @@ int test_mempool() {
 
 int test_replay_window() {
     ksl_parser_t p;
+    memset(&p, 0, sizeof(p));
     ksl_parser_init(&p);
     
     assert(ksl_check_replay(&p, 100) == KS_OK);

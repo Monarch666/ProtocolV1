@@ -169,8 +169,20 @@ int ks_fec_encode(ks_fec_encoder_t *encoder,
         return -1;
     }
 
-    // Simple XOR parity for demonstration
-    // Real Reed-Solomon would use Galois field arithmetic
+    /* FEC shard-alignment invariant:
+     * All shards — including the last one — MUST be exactly packet_size bytes.
+     * If the original data does not divide evenly, the caller is responsible for
+     * zero-padding the final shard to packet_size BEFORE calling this function.
+     * Failure to do so will produce incorrect parity and silently corrupt
+     * reconstructed data on the receive side.
+     *
+     * Recommendation: callers should store the real data length in the first 2
+     * bytes of the first shard (LE uint16) so the decoder can strip the padding.
+     */
+
+    /* XOR parity across all data shards.
+     * Real Reed-Solomon would use Galois field arithmetic; this XOR scheme
+     * can recover exactly one lost shard (p == 1 parity shard). */
     for (uint8_t p = 0; p < encoder->params.parity_shards; p++)
     {
         memset(parity_output[p], 0, packet_size);
@@ -594,64 +606,154 @@ int ks_delta_decode_battery(ks_delta_ctx_t *ctx, const uint8_t *delta_data,
 
 int ks_pack_phase3(const ks_header_t *header, const uint8_t *payload, size_t payload_len,
                    ks_delta_ctx_t *delta_ctx, ks_fec_encoder_t *fec_encoder,
-                   uint8_t *output, size_t max_output)
+                   ks_session_t *session, uint8_t *output, size_t max_output)
 {
-    // Simplified: just copy payload
-    // Real implementation would:
-    // 1. Check if should compress
-    // 2. Apply delta encoding if applicable
-    // 3. Compress with LZ4
-    // 4. Generate FEC parity
-    // 5. Pack with encryption
-
-    if (max_output < payload_len + 32)
+    if (!header || !payload || !output)
         return -1;
 
-    size_t pos = 0;
-    uint8_t flags = 0;
+    if (payload_len > KS_MAX_PAYLOAD_SIZE)
+        return -1;
 
-    // Check compression
+    /*
+     * SECURITY NOTE — Compress-Then-Encrypt ordering:
+     *
+     * Compression MUST occur BEFORE encryption. Compressing ciphertext yields
+     * near-zero savings (ciphertext is uniformly high-entropy) and wastes CPU.
+     *
+     * Introducing compression-before-encryption raises the CRIME/BREACH oracle
+     * question: can an attacker observe compressed ciphertext sizes to infer
+     * plaintext? This risk is mitigated for Kestrel because:
+     *   (a) The RF link is point-to-point and already fully encrypted end-to-end;
+     *       a passive observer cannot inject chosen plaintext without physical
+     *       proximity and active jamming/spoofing capabilities.
+     *   (b) ks_should_compress() skips payloads shorter than 32 bytes, limiting
+     *       the granularity available to an oracle attack.
+     *   (c) All commands are short fixed-size structs; only bulk telemetry is
+     *       compressed, which carries no secret-bearing text fields.
+     *
+     * Ref: RFC 7540 §10.6 (HTTP/2 compression security), CRIME/BREACH (2012).
+     */
+
+    /* ------------------------------------------------------------------
+     * Step 1: Compress the PLAINTEXT payload into a staging buffer.
+     *
+     * Wire layout when compressed:
+     *   [0..1]  original_len (uint16_t little-endian, uncompressed byte count)
+     *   [2..]   LZ4-compressed bytes
+     *
+     * The 2-byte prefix lets the receiver call ks_lz4_decompress() with the
+     * exact expected output size, which is required for correct decompression.
+     * ------------------------------------------------------------------ */
+    uint8_t  staging[KS_MAX_PAYLOAD_SIZE + 16]; /* +16: LZ4 worst-case overhead */
+    size_t   staging_len;
+    ks_header_t hdr = *header;
+
+    hdr.compressed           = false;
+    hdr.original_payload_len = 0;
+    hdr.payload_len          = (uint16_t)payload_len;
+
     if (ks_should_compress(payload, payload_len))
     {
-        uint8_t compressed[KS_MAX_PAYLOAD_SIZE + 16]; // Safe size for LZ4-style escape overhead
-        int comp_len = ks_lz4_compress(payload, payload_len, compressed, sizeof(compressed));
-        if (comp_len > 0 && (size_t)comp_len < payload_len * 0.9)
+        /* Reserve the first 2 bytes for the original-length prefix */
+        int comp_len = ks_lz4_compress(payload, payload_len,
+                                       staging + 2, sizeof(staging) - 2);
+
+        if (comp_len > 0 && (size_t)(comp_len + 2) < payload_len)
         {
-            flags |= 0x01; // Compressed
-            memcpy(&output[pos], compressed, comp_len);
-            pos += comp_len;
+            /* Compression produced a net saving — use the compressed path */
+            staging[0] = (uint8_t)(payload_len & 0xFF);        /* orig_len low  */
+            staging[1] = (uint8_t)((payload_len >> 8) & 0xFF); /* orig_len high */
+            staging_len = (size_t)comp_len + 2;
+
+            hdr.compressed           = true;
+            hdr.original_payload_len = (uint16_t)payload_len;
+            hdr.payload_len          = (uint16_t)staging_len;
+
             g_phase3_stats.packets_compressed++;
-            g_phase3_stats.bytes_before_compression += payload_len;
-            g_phase3_stats.bytes_after_compression += comp_len;
+            g_phase3_stats.bytes_before_compression += (uint32_t)payload_len;
+            g_phase3_stats.bytes_after_compression  += (uint32_t)staging_len;
         }
         else
         {
-            memcpy(&output[pos], payload, payload_len);
-            pos += payload_len;
+            /* Compression expanded the data — send raw (no flag set) */
+            memcpy(staging, payload, payload_len);
+            staging_len = payload_len;
             g_phase3_stats.packets_uncompressed++;
         }
     }
     else
     {
-        memcpy(&output[pos], payload, payload_len);
-        pos += payload_len;
+        /* Entropy check said no — copy raw (short payloads, high-entropy data) */
+        memcpy(staging, payload, payload_len);
+        staging_len = payload_len;
         g_phase3_stats.packets_uncompressed++;
     }
 
-    return (int)pos;
+    /* ------------------------------------------------------------------
+     * Step 2: Encrypt (or pack plain). Compression is already done above.
+     *
+     * kestrel_pack_with_nonce() handles:
+     *   • base + extended header encoding (including KS_FLAG_COMPRESSED)
+     *   • ChaCha20-Poly1305 AEAD encryption (if session != NULL)
+     *   • Nonce generation and management
+     *   • Poly1305 MAC append
+     *   • CRC-16 append
+     *
+     * NULL session = transmit unencrypted (e.g. for diagnostic captures).
+     * ------------------------------------------------------------------ */
+    return kestrel_pack_with_nonce(output, &hdr, staging, session);
 }
 
 int ks_parse_phase3(const uint8_t *input, size_t input_len,
                     ks_header_t *header, uint8_t *payload, size_t max_payload,
                     ks_delta_ctx_t *delta_ctx, ks_fec_decoder_t *fec_decoder)
 {
-    // Simplified parser
-    if (input_len > max_payload)
+    if (!input || !header || !payload || input_len == 0)
         return -1;
 
-    // Check if compressed (would need flag from header)
-    memcpy(payload, input, input_len);
-    return (int)input_len;
+    if (!header->compressed)
+    {
+        /* ------------------------------------------------------------------
+         * Uncompressed path: copy the wire payload directly to the caller.
+         * ------------------------------------------------------------------ */
+        if (input_len > max_payload)
+            return -1;
+
+        memcpy(payload, input, input_len);
+        return (int)input_len;
+    }
+
+    /* ------------------------------------------------------------------
+     * Compressed path.
+     *
+     * Wire layout: [orig_len_lo][orig_len_hi][lz4_data...]
+     *
+     * The 2-byte LE prefix was written by ks_pack_phase3() before encryption.
+     * By the time we reach here, decryption has already been performed by
+     * kestrel_pack_with_nonce() / ks_parse_char() upstream, so `input` is
+     * already the plaintext staging buffer (LZ4 bytes, NOT ciphertext).
+     * ------------------------------------------------------------------ */
+    if (input_len < 3)
+        return -1; /* Need at least 2-byte prefix + 1 byte of compressed data */
+
+    uint16_t original_len = (uint16_t)input[0] | ((uint16_t)input[1] << 8);
+
+    if (original_len == 0 || original_len > (uint16_t)max_payload)
+        return -1; /* Corrupt or oversized length field */
+
+    int decomp_len = ks_lz4_decompress(input + 2, input_len - 2,
+                                       payload, max_payload);
+
+    if (decomp_len < 0)
+        return -1; /* LZ4 decompression error */
+
+    if ((size_t)decomp_len != (size_t)original_len)
+        return -1; /* Size mismatch — truncated or corrupted stream */
+
+    /* Populate the in-memory header field so callers know the real size */
+    header->original_payload_len = original_len;
+
+    return decomp_len;
 }
 
 /* =============================================================================

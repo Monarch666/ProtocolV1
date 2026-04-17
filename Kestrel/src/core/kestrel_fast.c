@@ -304,38 +304,64 @@ int ks_parse_char_zerocopy(ks_parser_zerocopy_t *parser, uint8_t byte, uint8_t *
                 memcpy(parser->output_payload, decrypted, parser->payload_len);
             }
 
-            /* Replay protection — same sliding-window logic as kestrel.c */
+            /* ------------------------------------------------------------
+             * Replay protection — 64-packet sliding window.
+             *
+             * For encrypted packets: use the 32-bit nonce counter from
+             * cipher_nonce[0..3] (little-endian). The nonce counter is
+             * already MAC-authenticated at this point, so it cannot be
+             * spoofed. This extends anti-replay from 12-bit (~40 s at
+             * 100 Hz) to 32-bit (~497 days at 100 Hz).
+             *
+             * For unencrypted packets: fall back to the 12-bit wire
+             * sequence. Replay detection on unauthenticated traffic has
+             * limited value (no MAC), but prevents obvious duplicates.
+             * ------------------------------------------------------------ */
             uint16_t seq = ((uint16_t)(parser->header_buf[3] & 0x3) << 10)
                          | (((uint16_t)parser->header_buf[4] << 8 | parser->header_buf[5]) >> 6);
+
+            bool pkt_encrypted = (parser->header_buf[3] & KS_FLAG_ENCRYPTED) != 0;
+            uint32_t replay_seq;
+            if (pkt_encrypted)
+            {
+                replay_seq = (uint32_t)parser->cipher_nonce[0]
+                           | ((uint32_t)parser->cipher_nonce[1] << 8)
+                           | ((uint32_t)parser->cipher_nonce[2] << 16)
+                           | ((uint32_t)parser->cipher_nonce[3] << 24);
+            }
+            else
+            {
+                replay_seq = (uint32_t)seq; /* 12-bit wire sequence */
+            }
+
             if (parser->replay_init)
             {
-                int16_t diff = (int16_t)(seq - parser->last_seq);
-                if (diff > 2047)  diff -= 4096;
-                if (diff < -2048) diff += 4096;
+                int32_t diff = (int32_t)(replay_seq - parser->last_seq);
                 if (diff <= 0)
                 {
-                    uint8_t offset = (uint8_t)(-diff);
-                    if (offset >= 32 || (parser->replay_window & (1UL << offset)))
+                    int32_t back = -diff;
+                    if (back >= 64 || (parser->replay_window & (1ULL << (uint8_t)back)))
                     {
                         ks_parser_zerocopy_init(parser);
                         parser->error_count++;
                         return KS_ERR_REPLAY;
                     }
-                    parser->replay_window |= (1UL << offset);
+                    parser->replay_window |= (1ULL << (uint8_t)back);
                 }
                 else
                 {
-                    uint8_t shift = (uint8_t)diff;
-                    parser->replay_window = (shift >= 32) ? 0 : (parser->replay_window << shift);
-                    parser->replay_window |= 1UL;
-                    parser->last_seq = seq;
+                    uint32_t shift = (uint32_t)diff;
+                    parser->replay_window = (shift >= 64) ? 0ULL
+                                                           : (parser->replay_window << shift);
+                    parser->replay_window |= 1ULL;
+                    parser->last_seq = replay_seq;
                 }
             }
             else
             {
-                parser->replay_init = 1;
-                parser->last_seq = seq;
-                parser->replay_window = 1UL;
+                parser->replay_init   = 1;
+                parser->last_seq      = replay_seq;
+                parser->replay_window = 1ULL;
             }
 
             /* BUG-B FIX: Populate header fields so callers can read fragmented/sequence.
@@ -343,7 +369,7 @@ int ks_parse_char_zerocopy(ks_parser_zerocopy_t *parser, uint8_t byte, uint8_t *
                fields into a struct the caller could inspect, so rx_hdr.fragmented was always
                false for fragmented packets parsed via the zero-copy path. */
             parser->out_fragmented = parser->fragmented;
-            parser->out_sequence   = seq;
+            parser->out_sequence   = replay_seq;
 
             // Success!
             parser->state = 0;
@@ -613,43 +639,40 @@ int ks_parse_char_fast(ks_parser_zerocopy_t *parser, uint8_t byte, ks_mempool_t 
     return result;
 }
 
-int ks_check_replay_window(ks_parser_zerocopy_t *p, uint16_t seq)
+int ks_check_replay_window(ks_parser_zerocopy_t *p, uint32_t seq)
 {
     if (!p)
         return KS_ERR_NULL_POINTER;
 
+    /* Same nonce-counter strategy as ks_parse_char_zerocopy().
+     * Callers should pass the nonce counter for encrypted packets
+     * and the 12-bit wire sequence (cast to uint32_t) for unencrypted. */
     if (p->replay_init)
     {
-        int16_t diff = (int16_t)(seq - p->last_seq);
-        // Handle 12-bit sequence wrap-around
-        if (diff > 2047)
-            diff -= 4096;
-        else if (diff < -2048)
-            diff += 4096;
-
+        int32_t diff = (int32_t)(seq - p->last_seq);
         if (diff <= 0)
         {
-            uint8_t offset = (uint8_t)(-diff);
-            if (offset >= 32 || (p->replay_window & (1UL << offset)))
+            int32_t back = -diff;
+            if (back >= 64 || (p->replay_window & (1ULL << (uint8_t)back)))
             {
                 p->error_count++;
                 return KS_ERR_REPLAY; /* BUG-02 FIX (fast path): distinguish replay attacks from link errors */
             }
-            p->replay_window |= (1UL << offset);
+            p->replay_window |= (1ULL << (uint8_t)back);
         }
         else
         {
-            uint8_t shift = (uint8_t)diff;
-            p->replay_window = (shift >= 32) ? 0 : (p->replay_window << shift);
-            p->replay_window |= 1UL;
+            uint32_t shift = (uint32_t)diff;
+            p->replay_window = (shift >= 64) ? 0ULL : (p->replay_window << shift);
+            p->replay_window |= 1ULL;
             p->last_seq = seq;
         }
     }
     else
     {
-        p->replay_init = 1;
-        p->last_seq = seq;
-        p->replay_window = 1UL;
+        p->replay_init   = 1;
+        p->last_seq      = seq;
+        p->replay_window = 1ULL;
     }
     /* Bug-9 FIX: ks_check_replay_window() never incremented rx_count on success.
        Callers who use this function instead of ks_parse_char_zerocopy() (e.g. after
