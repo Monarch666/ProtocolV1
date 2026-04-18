@@ -163,6 +163,7 @@ typedef struct {
 #define KS_CMD_LAND 0x0004      /* Land at current position */
 #define KS_CMD_RTL 0x0005       /* Return to launch */
 #define KS_CMD_EMERGENCY 0x0006 /* Emergency stop */
+#define KS_CMD_KEY_ROTATE 0x0007 /* Trigger dynamic over-the-air key rotation */
 
 /* ACK Result Codes (used in ks_command_ack_t.result) */
 #define KS_ACK_OK 0x00          /* Command accepted */

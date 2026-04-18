@@ -10,7 +10,8 @@
 #include "kestrel.h"
 #include "kestrel_fast.h"
 #include "kestrel_rid.h"
-#include "kestrel_sora.h"   /* JARUS SORA OSO#06 compliance shim */
+#include "kestrel_sora.h"      /* JARUS SORA OSO#06 compliance shim */
+#include "kestrel_keymanager.h" /* ks_atomic_key_rotate, ks_session_init  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,6 +128,9 @@ static bool     g_npnt_validated     = false; /* true once a valid PA verified  
 static uint32_t g_npnt_valid_until   = 0;     /* PA expiry (Unix UTC)           */
 static uint8_t  g_dgca_pub[32]       = {0};   /* Pre-shared DGCA Ed25519 pubkey */
 static ks_npnt_pa_t g_npnt_pa        = {0};   /* Last received PA (for logging) */
+
+/* Dynamic Key Rotation Trigger */
+static bool g_trigger_rotation       = false;
 
 // Flight mode name lookup
 static const char *mode_names[] = {
@@ -297,6 +301,12 @@ static ks_command_ack_t process_command(uav_state_t *state, const ks_command_t *
         printf("  >>> !!! EMERGENCY STOP !!!\n");
         state->armed = false;
         state->flight_mode = KS_MODE_MANUAL;
+        ack.result = KS_ACK_OK;
+        break;
+
+    case KS_CMD_KEY_ROTATE:
+        printf("  >>> OTA KEY ROTATION REQUESTED\n");
+        g_trigger_rotation = true;
         ack.result = KS_ACK_OK;
         break;
 
@@ -639,21 +649,35 @@ int main(int argc, char *argv[])
                         crypto_blake2b(derived_key, 32, raw_shared, 32);
                         crypto_wipe(raw_shared, 32);
 
-                        if (ks_session_init(&g_session, derived_key) != 0)
+                        if (!g_session_ready)
                         {
-                            printf(RED "  >>> ECDH FATAL: session init failed (CSPRNG error)\n" RESET);
-                            crypto_wipe(derived_key, 32);
-                            break;
+                            if (ks_session_init(&g_session, derived_key) != 0)
+                            {
+                                printf(RED "  >>> ECDH FATAL: session init failed (CSPRNG error)\n" RESET);
+                                crypto_wipe(derived_key, 32);
+                                break;
+                            }
+                            /* Apply saved NVM counter (prevents reuse on reboot) */
+                            load_nonce_counter(&g_session, "keys/uav_nonce.dat");
+                            g_session_ready = true;
+                        }
+                        else
+                        {
+                            if (ks_atomic_key_rotate(&g_session, derived_key) != 0)
+                            {
+                                printf(RED "  >>> ECDH FATAL: key rotation failed\n" RESET);
+                                crypto_wipe(derived_key, 32);
+                                break;
+                            }
+                            save_nonce_state(&g_session, "keys/uav_nonce.dat");
+                            printf(GREEN "  >>> SESSION KEY ROTATED AMICABLY." RESET "\n");
                         }
                         crypto_wipe(derived_key, 32); /* Remove key from stack */
+                        
                         /* SORA OSO#06 HOOK: Log session key established (key rotation event) */
                         ks_sora_log(&g_sora_ctx, KS_SORA_KEY_ROTATED,
                                     get_time_ms(), 1 /*UAV sys_id*/,
                                     state.sequence, 0 /*success*/);
-
-                        /* Apply saved NVM counter (prevents reuse on reboot) */
-                        load_nonce_counter(&g_session, "keys/uav_nonce.dat");
-                        g_session_ready = true;
 
                         /* Update the parser's key pointer */
                         cmd_parser.key_32b = g_session.key;
@@ -1037,6 +1061,21 @@ int main(int argc, char *argv[])
             }
         }
         /* next_iter label removed — no goto references it */
+
+        // --- Handle Dynamic Key Rotation ---
+        if (g_trigger_rotation && ecdh_state == KS_ECDH_ESTABLISHED)
+        {
+            g_trigger_rotation = false;
+            printf(GREEN "  >>> Initiating Key Rotation... regenerating ECDH pair\n" RESET);
+            
+            secure_random(private_key, 32);
+            crypto_x25519_public_key(public_key, private_key);
+            
+            ecdh_state = KS_ECDH_IDLE; // Reset to idle to trigger handshake loop below
+            ecdh_seq_num++;
+            ecdh_retry_count = 0;
+            ecdh_last_send_time = get_time_ms() - ecdh_timeout_ms; // Force immediate transmission
+        }
 
         // --- Update simulation ---
         float t = loop * 0.1f;

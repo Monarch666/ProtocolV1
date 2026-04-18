@@ -11,7 +11,11 @@
 #include "kestrel.h"
 #include "kestrel_fast.h"
 #include "monocypher.h"
-#include "kestrel_sora.h"   /* JARUS SORA OSO#06 compliance shim */
+#include "kestrel_sora.h"      /* JARUS SORA OSO#06 compliance shim */
+#include "kestrel_keymanager.h" /* ks_atomic_key_rotate, ks_session_init  */
+
+#define GREEN "\033[0;32m"
+#define RESET "\033[0m"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -197,6 +201,7 @@ static void print_menu(void)
     printf("  7: Mode Change 8: Send Waypoint\n");
     printf("  9: Upload Mission (fragmented)\n");
     printf("  N: Send NPNT Permission Artifact (keys/test_pa.bin)\n");
+    printf("  R: Rotate Session Key (OTA)\n");
     printf("  0: Show Menu  Ctrl+C: Quit\n");
     printf(">>> ");
     fflush(stdout);
@@ -1056,6 +1061,14 @@ int main(int argc, char *argv[])
                     printf("[NPNT] ERROR: Could not send PA (session not ready?).\n");
                 break;
             }
+            case 'R':
+            case 'r':
+            {
+                printf("\n--- Triggering OTA Key Rotation ---\n");
+                send_cmd(cmd_sock, &uav_cmd_addr, KS_CMD_KEY_ROTATE, 0,
+                         &pool, &g_session, &crypto_ctx, &cmd_sequence);
+                break;
+            }
             default:
                 break;
             }
@@ -1183,21 +1196,35 @@ int main(int argc, char *argv[])
                     crypto_blake2b(derived_key, 32, raw_shared, 32);
                     crypto_wipe(raw_shared, 32);
 
-                    if (ks_session_init(&g_session, derived_key) != 0)
+                    if (!g_session_ready)
                     {
-                        printf("  >>> ECDH FATAL: session init failed (CSPRNG error)\n");
-                        crypto_wipe(derived_key, 32);
-                        break;
+                        if (ks_session_init(&g_session, derived_key) != 0)
+                        {
+                            printf("  >>> ECDH FATAL: session init failed (CSPRNG error)\n");
+                            crypto_wipe(derived_key, 32);
+                            break;
+                        }
+                        /* Apply saved NVM counter (prevents reuse on reboot) */
+                        load_nonce_counter(&g_session, "keys/gcs_nonce.dat");
+                        g_session_ready = true;
+                    }
+                    else
+                    {
+                        if (ks_atomic_key_rotate(&g_session, derived_key) != 0)
+                        {
+                            printf("  >>> ECDH FATAL: key rotation failed\n");
+                            crypto_wipe(derived_key, 32);
+                            break;
+                        }
+                        save_nonce_state(&g_session, "keys/gcs_nonce.dat");
+                        printf(GREEN "  >>> SESSION KEY ROTATED AMICABLY." RESET "\n");
                     }
                     crypto_wipe(derived_key, 32); /* Remove key from stack */
+                    
                     /* SORA OSO#06 HOOK: Log session key established (key rotation event) */
                     ks_sora_log(&g_sora_ctx, KS_SORA_KEY_ROTATED,
                                 get_time_ms(), 255 /*GCS sys_id*/,
                                 cmd_sequence, 0 /*success*/);
-
-                    /* Apply saved NVM counter (prevents reuse on reboot) */
-                    load_nonce_counter(&g_session, "keys/gcs_nonce.dat");
-                    g_session_ready = true;
 
                     /* Update the parser's key pointer */
                     parser.key_32b = g_session.key;
