@@ -47,6 +47,16 @@
 
 ---
 
+## Ecosystem & Implementations
+
+While this repository contains the C reference implementation and PC validation tools, Kestrel has been ported to other platforms and languages to support real-world UAV hardware:
+
+- **[Kestrel-Arduino](https://github.com/I-am-Krish/Krestel_Arduno)**: An embedded port optimized for ESP32, ARM Cortex, and AVR microcontrollers. Features a zero-copy parser and a hardware-accelerated ChaCha20-Poly1305 implementation.
+- **Python GCS (`kestrel_gcs_usb.py`)**: Included in the Arduino repository, a pure-Python ground control station that parses and decrypts live Kestrel telemetry via USB without needing the C binaries.
+- **Pixhawk / MAVLink Bridge**: The `KestrelPixhawkBridge_USB` example in the Arduino repository runs on an ESP32 to act as a secure proxy, translating native ArduPilot MAVLink telemetry from a Pixhawk (CubeOrange+) flight controller into encrypted Kestrel packets for the GCS.
+
+---
+
 ## Features
 
 ### Core Protocol
