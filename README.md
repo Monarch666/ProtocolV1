@@ -1290,12 +1290,15 @@ On ARM Cortex-M4 @168MHz:
   - Phase 2 & 3 performance optimizations (zero-copy parser, memory pool, delta encoding)
   - Two-PC WiFi network test with zero packet loss
   - Production-ready release
-- **April 2026** - 
-  - Point 1 
-- **May 2026** -
-  - Point 2
-- **June 2026** - 
-  - Point 3
+- **April 2026** - Hardware Integration & Embedded Ports
+  - Developed `Kestrel-Arduino` library for ESP32 and ARM Cortex microcontrollers
+  - Implemented embedded zero-copy parsing and hardware-accelerated ChaCha20-Poly1305
+- **May 2026** - Bridge & Tooling Expansion
+  - Built pure-Python GCS (`kestrel_gcs_usb.py`) for cross-platform desktop verification
+  - Added Remote ID (ASTM F3411) basic ID message structures
+- **June 2026** - Flight Controller Integration
+  - Successfully bridged ArduPilot MAVLink telemetry to Kestrel on ESP32 (`KestrelPixhawkBridge_USB`)
+  - Verified real-time telemetry streaming on physical Pixhawk (CubeOrange+) hardware
 ---
 
 ## Contributing
