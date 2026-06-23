@@ -1290,7 +1290,12 @@ On ARM Cortex-M4 @168MHz:
   - Phase 2 & 3 performance optimizations (zero-copy parser, memory pool, delta encoding)
   - Two-PC WiFi network test with zero packet loss
   - Production-ready release
-
+- **April 2026** - 
+  - Point 1 
+- **May 2026** -
+  - Point 2
+- **June 2026** - 
+  - Point 3
 ---
 
 ## Contributing

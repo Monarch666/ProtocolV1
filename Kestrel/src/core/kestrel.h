@@ -615,7 +615,7 @@ typedef struct
 typedef struct
 {
     uint8_t  id_type;    /* 0x10=Serial 0x20=CAA-assigned 0x30=UTM-assigned */
-    uint8_t  ua_type;    /* 0=None 1=Aeroplane 2=Helicopter 5=Rotorcraft    */
+    uint8_t  ua_type;    /* 0=None 1=Aeroplane 2=Helicopter/Multirotor 3=Gyroplane 4=VTOL */
     char     uas_id[20]; /* UAV serial number or CAA-assigned ID (ASCII)    */
 } ks_rid_basic_id_t;
 

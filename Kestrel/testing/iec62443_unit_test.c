@@ -61,7 +61,7 @@ static int g_tests_failed = 0;
             printf("  PASS  %s\n", msg);                                     \
         } else {                                                             \
             g_tests_failed++;                                                \
-            printf("  FAIL  %s  (line %d)\n", msg, __LINE__);               \
+            printf("  FAIL  %s  (line %d)\n", msg, __LINE__);                \
         }                                                                    \
     } while (0)
 
@@ -502,7 +502,7 @@ int main(void)
 {
     printf("╔══════════════════════════════════════════════════════════╗\n");
     printf("║  IEC 62443-4-2 — kestrel_iec62443 Unit Test Suite        ║\n");
-    printf("║  Target: SL 2  |  CR Coverage: 1.5, 1.9, 2.8-2.10,      ║\n");
+    printf("║  Target: SL 2  |  CR Coverage: 1.5, 1.9, 2.8-2.10,       ║\n");
     printf("║                          3.9, 6.1-6.2, 7.1               ║\n");
     printf("╚══════════════════════════════════════════════════════════╝\n");
 
