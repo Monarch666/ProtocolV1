@@ -1323,7 +1323,7 @@ Contributions welcome! Areas of interest:
 
 This project includes:
 
-- **Kestrel Protocol (reference implementation):** MIT License
+- **Kestrel Protocol (reference implementation):** Proprietary License
 - **Monocypher:** Dual-licensed BSD-2-Clause OR CC0-1.0 (public domain)
 
 See LICENSE file for details.
